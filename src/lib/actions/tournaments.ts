@@ -11,6 +11,7 @@ import {
   type TournamentRow,
 } from "@/lib/db";
 import type { TournamentConfigJson } from "@/lib/db";
+import { MIN_PLAYERS, MAX_PLAYERS } from "@/lib/constants";
 import type {
   AiTone,
   MainFormat,
@@ -50,8 +51,10 @@ export async function createTournament(input: CreateTournamentInput) {
   const { supabase, user } = await requireUser();
 
   if (!input.name?.trim()) throw new Error("Tournament name is required");
-  if (input.players.length < 2 || input.players.length > 32) {
-    throw new Error("Tournaments need between 2 and 32 players");
+  if (input.players.length < MIN_PLAYERS || input.players.length > MAX_PLAYERS) {
+    throw new Error(
+      `Tournaments need between ${MIN_PLAYERS} and ${MAX_PLAYERS} players`,
+    );
   }
 
   const drawSeed = newSeed();

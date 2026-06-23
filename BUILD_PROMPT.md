@@ -42,7 +42,7 @@ Pick one as the default (make branding trivial to swap via a single config const
 ## Creation wizard (guided multi-step)
 
 1. **Basics:** tournament name, optional date, game/sport name.
-2. **Players:** enter count then names; add/remove/edit. Support **2–32 players**, optimized to look great across that whole range.
+2. **Players:** enter count then names; add/remove/edit. Support **2–128 players**, optimized to look great across that whole range.
 3. **Scoring mode (per tournament):** **win/loss only** OR **scored** (record actual point totals). Store a winner plus optional scores on every match so both modes are supported.
 4. **Seeding method** (all of these must work):
    - **Manual** — organizer drag-ranks players 1..N.

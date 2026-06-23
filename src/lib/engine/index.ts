@@ -36,7 +36,7 @@ export { makeRng, shuffle, newSeed } from "./rng";
 export { nextPow2, seedOrder } from "./seeding";
 export { computeStandings } from "./standings";
 export { resolveMatches, championOf, isComplete } from "./resolve";
-export { GROUP_KEYS } from "./groups";
+export { groupKey, groupKeyList, compareGroupKeys } from "./groups";
 export type { Advancer, GroupAssignment } from "./groups";
 
 export interface TournamentConfig {

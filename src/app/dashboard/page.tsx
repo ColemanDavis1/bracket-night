@@ -142,7 +142,7 @@ function EmptyState() {
       <div className="max-w-sm">
         <h3 className="text-lg font-bold">No tournaments yet</h3>
         <p className="mt-1 text-sm text-muted-foreground">
-          Spin up your first bracket in under a minute. You can add 2–32 players
+          Spin up your first bracket in under a minute. You can add 2–128 players
           and pick any format.
         </p>
         <Button asChild className="mt-5">

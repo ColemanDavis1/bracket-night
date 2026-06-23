@@ -39,7 +39,7 @@ Claude API** for matchup previews.
   and has a dashboard of active/past tournaments.
 - **Public, read-only hub** at `/t/[slug]` — anyone can follow schedule,
   standings, rankings, and previews with no account.
-- **Guided creation wizard:** basics → players (2–32) → scoring mode →
+- **Guided creation wizard:** basics → players (2–128) → scoring mode →
   seeding method → format → tiebreaker → AI tone → review.
 - **Formats:** Round Robin, Single / Double / Triple Elimination, and
   Group Stage → Knockout (World Cup style), all with correct bye handling.

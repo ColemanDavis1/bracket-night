@@ -10,7 +10,32 @@ import { generateKnockoutFromLeaves } from "./elimination";
 import { nextPow2, seedOrder } from "./seeding";
 import { makeRng, shuffle } from "./rng";
 
-export const GROUP_KEYS = "ABCDEFGHIJKLMNOP".split("");
+/**
+ * Spreadsheet-style group key for a 0-based index: A..Z, then AA, AB, ...
+ * Supports any number of groups (the wizard allows up to floor(players/2)).
+ */
+export function groupKey(index: number): string {
+  let i = index;
+  let key = "";
+  do {
+    key = String.fromCharCode(65 + (i % 26)) + key;
+    i = Math.floor(i / 26) - 1;
+  } while (i >= 0);
+  return key;
+}
+
+/** The first `count` group keys in order. */
+export function groupKeyList(count: number): string[] {
+  return Array.from({ length: Math.max(0, count) }, (_, i) => groupKey(i));
+}
+
+/**
+ * Order group keys so single-letter keys precede multi-letter ones
+ * (e.g. Z before AA), then alphabetically within the same length.
+ */
+export function compareGroupKeys(a: string, b: string): number {
+  return a.length - b.length || (a < b ? -1 : a > b ? 1 : 0);
+}
 
 export interface GroupAssignment {
   groupKey: string;
@@ -62,7 +87,7 @@ export function assignGroups(
   }
 
   return groups.map((participantIds, i) => ({
-    groupKey: GROUP_KEYS[i] as string,
+    groupKey: groupKey(i),
     participantIds,
   }));
 }
@@ -142,7 +167,9 @@ export function computeAdvancers(
  * to top performers and puts winners opposite lower finishers).
  */
 export function knockoutLeafOrder(advancers: readonly Advancer[]): (string | null)[] {
-  const groupKeys = Array.from(new Set(advancers.map((a) => a.groupKey))).sort();
+  const groupKeys = Array.from(new Set(advancers.map((a) => a.groupKey))).sort(
+    compareGroupKeys,
+  );
   const numGroups = groupKeys.length;
   const maxRank = Math.max(...advancers.map((a) => a.rankInGroup));
   const size = nextPow2(advancers.length);

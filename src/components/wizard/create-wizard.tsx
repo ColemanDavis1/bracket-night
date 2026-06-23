@@ -22,7 +22,8 @@ import {
   TIEBREAK_LABELS,
   TONE_LABELS,
 } from "@/lib/labels";
-import { GROUP_KEYS, nextPow2 } from "@/lib/engine";
+import { groupKey, groupKeyList, nextPow2 } from "@/lib/engine";
+import { MAX_PLAYERS } from "@/lib/constants";
 import type {
   AiTone,
   MainFormat,
@@ -105,7 +106,7 @@ export function CreateWizard() {
     setPlayers((ps) => ps.map((p) => (p.id === id ? { ...p, name: value } : p)));
   }
   function addPlayer() {
-    if (players.length >= 32) return;
+    if (players.length >= MAX_PLAYERS) return;
     setPlayers((ps) => [...ps, newPlayer()]);
   }
   function removePlayer(id: string) {
@@ -116,7 +117,8 @@ export function CreateWizard() {
     if (step === 0 && !name.trim()) return "Give your tournament a name.";
     if (step === 1) {
       if (validPlayers.length < 2) return "Add at least 2 players.";
-      if (validPlayers.length > 32) return "Maximum 32 players.";
+      if (validPlayers.length > MAX_PLAYERS)
+        return `Maximum ${MAX_PLAYERS} players.`;
       const names = validPlayers.map((p) => p.name.trim().toLowerCase());
       if (new Set(names).size !== names.length)
         return "Player names must be unique.";
@@ -166,10 +168,10 @@ export function CreateWizard() {
 
     const manualGroupIndexes =
       format === "group_knockout" && groupDraw === "manual"
-        ? GROUP_KEYS.slice(0, numGroups).map((groupKey) => ({
-            groupKey,
+        ? groupKeyList(numGroups).map((key) => ({
+            groupKey: key,
             playerIndexes: validPlayers
-              .filter((p) => (groupAssign[p.id] ?? GROUP_KEYS[0]) === groupKey)
+              .filter((p) => (groupAssign[p.id] ?? groupKey(0)) === key)
               .map((p) => idToIndex.get(p.id)!),
           }))
         : undefined;
@@ -266,7 +268,7 @@ export function CreateWizard() {
         {step === 1 && (
           <Step
             title="Players"
-            desc={`Add 2–32 players. ${validPlayers.length} entered.`}
+            desc={`Add 2–${MAX_PLAYERS} players. ${validPlayers.length} entered.`}
           >
             <div className="space-y-2">
               {players.map((p, i) => (
@@ -295,7 +297,7 @@ export function CreateWizard() {
               type="button"
               variant="outline"
               onClick={addPlayer}
-              disabled={players.length >= 32}
+              disabled={players.length >= MAX_PLAYERS}
               className="mt-3"
             >
               <Plus /> Add player
@@ -463,7 +465,7 @@ export function CreateWizard() {
                             {p.name}
                           </span>
                           <Select
-                            value={groupAssign[p.id] ?? GROUP_KEYS[0]}
+                            value={groupAssign[p.id] ?? groupKey(0)}
                             onValueChange={(v) =>
                               setGroupAssign((g) => ({ ...g, [p.id]: v }))
                             }
@@ -472,7 +474,7 @@ export function CreateWizard() {
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
-                              {GROUP_KEYS.slice(0, numGroups).map((k) => (
+                              {groupKeyList(numGroups).map((k) => (
                                 <SelectItem key={k} value={k}>
                                   Group {k}
                                 </SelectItem>

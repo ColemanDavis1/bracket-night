@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { tournamentCsv } from "@/lib/csv";
 import { recordLine, type NameMap } from "@/lib/hub-helpers";
 import type { EngineState } from "@/lib/engine";
+import { stageDisplayLabel } from "@/lib/engine";
 import type { HubTournament } from "./types";
 
 export function ExportBar({
@@ -20,6 +21,9 @@ export function ExportBar({
 }) {
   const [copied, setCopied] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
+  // Multi-stage export: "" = all stages, otherwise a stage index.
+  const [stageFilter, setStageFilter] = useState<string>("");
+  const stages = state.stages;
 
   function publicUrl() {
     if (typeof window === "undefined") return "";
@@ -47,9 +51,11 @@ export function ExportBar({
   }
 
   function downloadCsv() {
+    const idx = stageFilter === "" ? null : Number(stageFilter);
+    const suffix = idx == null ? "" : `-stage${idx + 1}`;
     download(
-      `${tournament.slug}.csv`,
-      tournamentCsv(tournament.name, state, names),
+      `${tournament.slug}${suffix}.csv`,
+      tournamentCsv(tournament.name, state, names, idx),
       "text/csv",
     );
   }
@@ -75,6 +81,21 @@ export function ExportBar({
         {copied ? <Check className="text-broadcast-green" /> : <Copy />}
         {copied ? "Copied" : "Share link"}
       </Button>
+      {stages && stages.length > 0 ? (
+        <select
+          value={stageFilter}
+          onChange={(e) => setStageFilter(e.target.value)}
+          className="h-9 rounded-md border border-border bg-background px-2 text-sm"
+          aria-label="Export stage"
+        >
+          <option value="">All stages</option>
+          {stages.map((s) => (
+            <option key={s.index} value={String(s.index)}>
+              {stageDisplayLabel(stages, s.index)}
+            </option>
+          ))}
+        </select>
+      ) : null}
       <Button variant="outline" size="sm" onClick={downloadCsv}>
         <Download /> CSV
       </Button>

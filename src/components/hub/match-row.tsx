@@ -12,18 +12,24 @@ export function MatchRow({
   scoringMode,
   tournamentId,
   isOrganizer,
+  seriesLength = 1,
 }: {
   match: ResolvedMatch;
   names: NameMap;
   scoringMode: ScoringMode;
   tournamentId: string;
   isOrganizer: boolean;
+  seriesLength?: 1 | 3 | 5;
 }) {
   const { a, b } = matchupName(match, names);
   const done = match.status === "done";
   const isBye = match.status === "bye";
   const aWon = done && match.winnerId === match.aId;
   const bWon = done && match.winnerId === match.bId;
+  const elimStages = ["winners", "losers", "grand_final", "knockout"];
+  const isSeries = seriesLength > 1 && elimStages.includes(match.stage);
+  // Series matches always show the games-won score (e.g. 2–1), even in win/loss.
+  const showScore = done && (scoringMode === "scored" || isSeries);
 
   if (isBye && !match.forfeit) {
     return (
@@ -37,19 +43,9 @@ export function MatchRow({
   return (
     <div className="flex items-center gap-3 rounded-lg border border-border bg-card px-3 py-2">
       <div className="min-w-0 flex-1">
-        <Side
-          name={a}
-          score={match.scoreA}
-          won={aWon}
-          showScore={done && scoringMode === "scored"}
-        />
+        <Side name={a} score={match.scoreA} won={aWon} showScore={showScore} />
         <div className="my-0.5 h-px bg-border/50" />
-        <Side
-          name={b}
-          score={match.scoreB}
-          won={bWon}
-          showScore={done && scoringMode === "scored"}
-        />
+        <Side name={b} score={match.scoreB} won={bWon} showScore={showScore} />
       </div>
       <div className="flex shrink-0 flex-col items-end gap-1">
         {match.forfeit ? (
@@ -67,6 +63,7 @@ export function MatchRow({
             match={match}
             names={names}
             scoringMode={scoringMode}
+            seriesLength={seriesLength}
             trigger={
               <Button
                 size="sm"

@@ -1,13 +1,16 @@
+import type { ReactNode } from "react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { Plus, ExternalLink, Calendar, Users } from "lucide-react";
+import { Plus } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { BrandMark } from "@/components/brand";
 import { signOut } from "@/lib/actions/tournaments";
-import { FORMAT_LABELS } from "@/lib/labels";
-import type { TournamentRow } from "@/lib/db";
+import {
+  TournamentCard,
+  type DashboardTournament,
+} from "@/components/dashboard/tournament-card";
+import { BulkDeletePast } from "@/components/dashboard/bulk-delete-past";
 
 export const dynamic = "force-dynamic";
 
@@ -24,11 +27,11 @@ export default async function DashboardPage() {
     .eq("organizer_id", user.id)
     .order("created_at", { ascending: false });
 
-  const rows = (tournaments ?? []) as (TournamentRow & {
-    players: { count: number }[];
-  })[];
-  const active = rows.filter((t) => t.status !== "complete");
-  const past = rows.filter((t) => t.status === "complete");
+  const rows = (tournaments ?? []) as DashboardTournament[];
+  const archived = rows.filter((t) => t.archived_at != null);
+  const live = rows.filter((t) => t.archived_at == null);
+  const active = live.filter((t) => t.status !== "complete");
+  const past = live.filter((t) => t.status === "complete");
 
   return (
     <div>
@@ -72,7 +75,28 @@ export default async function DashboardPage() {
         ) : (
           <div className="space-y-8">
             <Section title="Active" tournaments={active} />
-            {past.length > 0 ? <Section title="Past" tournaments={past} /> : null}
+            {past.length > 0 ? (
+              <Section
+                title="Past"
+                tournaments={past}
+                action={<BulkDeletePast count={past.length} />}
+              />
+            ) : null}
+            {archived.length > 0 ? (
+              <details className="group">
+                <summary className="mb-3 flex cursor-pointer list-none items-center gap-2 text-xs font-bold uppercase tracking-widest text-muted-foreground">
+                  Archived ({archived.length})
+                  <span className="text-[10px] font-medium normal-case tracking-normal text-muted-foreground/70 group-open:hidden">
+                    — show
+                  </span>
+                </summary>
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  {archived.map((t) => (
+                    <TournamentCard key={t.id} t={t} />
+                  ))}
+                </div>
+              </details>
+            ) : null}
           </div>
         )}
       </main>
@@ -83,57 +107,28 @@ export default async function DashboardPage() {
 function Section({
   title,
   tournaments,
+  action,
 }: {
   title: string;
-  tournaments: (TournamentRow & { players: { count: number }[] })[];
+  tournaments: DashboardTournament[];
+  action?: ReactNode;
 }) {
   if (tournaments.length === 0) return null;
   return (
     <section>
-      <h2 className="mb-3 text-xs font-bold uppercase tracking-widest text-muted-foreground">
-        {title}
-      </h2>
+      <div className="mb-3 flex items-center justify-between">
+        <h2 className="text-xs font-bold uppercase tracking-widest text-muted-foreground">
+          {title}
+        </h2>
+        {action}
+      </div>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {tournaments.map((t) => (
-          <Link
-            key={t.id}
-            href={`/t/${t.slug}/manage`}
-            className="group rounded-xl border border-border bg-card p-5 transition-colors hover:border-primary/60"
-          >
-            <div className="flex items-start justify-between">
-              <h3 className="font-bold leading-tight">{t.name}</h3>
-              <StatusBadge status={t.status} />
-            </div>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {t.game_name || "Game night"} ·{" "}
-              {FORMAT_LABELS[t.format] ?? t.format}
-            </p>
-            <div className="mt-4 flex items-center gap-4 text-xs text-muted-foreground">
-              <span className="inline-flex items-center gap-1">
-                <Users className="h-3.5 w-3.5" />
-                {t.players?.[0]?.count ?? 0} players
-              </span>
-              {t.event_date ? (
-                <span className="inline-flex items-center gap-1">
-                  <Calendar className="h-3.5 w-3.5" />
-                  {new Date(t.event_date).toLocaleDateString()}
-                </span>
-              ) : null}
-              <span className="ml-auto inline-flex items-center gap-1 text-primary opacity-0 transition-opacity group-hover:opacity-100">
-                Open <ExternalLink className="h-3.5 w-3.5" />
-              </span>
-            </div>
-          </Link>
+          <TournamentCard key={t.id} t={t} />
         ))}
       </div>
     </section>
   );
-}
-
-function StatusBadge({ status }: { status: TournamentRow["status"] }) {
-  if (status === "complete") return <Badge variant="gold">Final</Badge>;
-  if (status === "live") return <Badge>Live</Badge>;
-  return <Badge variant="muted">Setup</Badge>;
 }
 
 function EmptyState() {

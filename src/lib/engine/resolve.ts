@@ -82,8 +82,9 @@ export function resolveMatches(
     };
 
     // Grand-final reset: void GF-2 if the winners-bracket player won GF-1.
-    if (g.key === "GF-2") {
-      const gf1 = byKey.get("GF-1");
+    // Keys may be namespaced per stage (e.g. "S3-GF-2"); derive the sibling.
+    if (g.key.endsWith("GF-2")) {
+      const gf1 = byKey.get(g.key.slice(0, -1) + "1");
       if (gf1 && gf1.status === "done" && gf1.winnerId === gf1.aId) {
         m.status = "bye";
         m.voided = true;

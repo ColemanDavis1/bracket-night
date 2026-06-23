@@ -6,6 +6,7 @@ export const FORMAT_LABELS: Record<MainFormat, string> = {
   double_elim: "Double Elimination",
   triple_elim: "Triple Elimination",
   group_knockout: "Group Stage → Knockout",
+  multi_stage: "Multi-Stage Pipeline",
 };
 
 export const FORMAT_BLURBS: Record<MainFormat, string> = {
@@ -14,6 +15,8 @@ export const FORMAT_BLURBS: Record<MainFormat, string> = {
   double_elim: "A winners and losers bracket — out after two losses.",
   triple_elim: "Three lives. Out after three losses (multi-life format).",
   group_knockout: "Group round robins feed a cross-paired knockout bracket.",
+  multi_stage:
+    "A custom pipeline of stages that narrows the field down to a champion.",
 };
 
 export const SCORING_LABELS: Record<ScoringMode, string> = {

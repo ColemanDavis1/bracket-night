@@ -8,7 +8,7 @@ import type {
   SeedingMethod,
 } from "@/lib/engine";
 import { buildEngineState, type TournamentConfig } from "@/lib/engine";
-import type { GroupAssignment } from "@/lib/engine";
+import type { GroupAssignment, StageConfig } from "@/lib/engine";
 
 /** Extra config persisted in tournaments.config (jsonb). */
 export interface TournamentConfigJson {
@@ -21,6 +21,16 @@ export interface TournamentConfigJson {
   groupDraw?: "random" | "manual";
   manualGroups?: GroupAssignment[];
   knockoutFormat?: "single_elim" | "double_elim" | "triple_elim";
+  /** multi_stage pipeline definition (Feature 8). */
+  stages?: StageConfig[];
+  /** Optional organizer notes / house rules shown on the public hub. */
+  notes?: string;
+  /** Parallel stations: matches playable concurrently (Feature 12). 1–8. */
+  numStations?: number;
+  /** Best-of-N series length for elimination matches (Feature 13). 1 | 3 | 5. */
+  seriesLength?: 1 | 3 | 5;
+  /** Allow players to submit results for approval (Feature 15). */
+  selfServiceScoring?: boolean;
 }
 
 export interface TournamentRow {
@@ -40,6 +50,8 @@ export interface TournamentRow {
   config: TournamentConfigJson;
   power_ranking: string[];
   prev_power_ranking: string[];
+  /** Soft-delete timestamp; null means the tournament is active. */
+  archived_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -54,6 +66,12 @@ export interface PlayerRow {
   created_at: string;
 }
 
+/** One game within a best-of-N series (Feature 13). */
+export interface SeriesGame {
+  a: number;
+  b: number;
+}
+
 export interface MatchResultRow {
   id: string;
   tournament_id: string;
@@ -63,6 +81,7 @@ export interface MatchResultRow {
   score_b: number | null;
   is_draw: boolean;
   forfeit: boolean;
+  series_games?: SeriesGame[] | null;
 }
 
 export function toParticipants(players: readonly PlayerRow[]): Participant[] {
@@ -106,6 +125,7 @@ export function toEngineConfig(t: TournamentRow): TournamentConfig {
     groupDraw: c.groupDraw,
     manualGroups: c.manualGroups,
     knockoutFormat: c.knockoutFormat,
+    stages: c.stages,
   };
 }
 

@@ -1,4 +1,5 @@
 import type { EngineState } from "@/lib/engine";
+import { phaseProgress } from "@/lib/engine";
 import { matchupName, recordLine, type NameMap } from "@/lib/hub-helpers";
 
 /** Broadcast-style scrolling ticker of recent results and standings. */
@@ -10,6 +11,16 @@ export function Ticker({
   names: NameMap;
 }) {
   const items: string[] = [];
+
+  // Lead with phase context so viewers always know where the event stands.
+  if (!state.complete && state.matches.length > 0) {
+    const pp = phaseProgress(state);
+    const parts: string[] = [];
+    if (state.activeStageIndex > 0) parts.push(`STAGE ${state.activeStageIndex + 1}`);
+    parts.push(pp.label.toUpperCase());
+    if (pp.roundCount > 1) parts.push(`ROUND ${pp.roundNumber} OF ${pp.roundCount}`);
+    items.push(parts.join(" · "));
+  }
 
   const recent = [...state.matches]
     .filter((m) => m.status === "done")

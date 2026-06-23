@@ -35,6 +35,13 @@ export default async function PrintPage({
         <PrintButton />
       </div>
 
+      {tournament.notes ? (
+        <div className="mb-6 rounded-lg border border-border px-3 py-2 text-sm">
+          <span className="mr-1.5 font-semibold">House rules:</span>
+          <span className="whitespace-pre-wrap">{tournament.notes}</span>
+        </div>
+      ) : null}
+
       <section className="mb-8">
         <h2 className="mb-2 text-sm font-bold uppercase tracking-widest text-muted-foreground">
           Standings
@@ -47,9 +54,14 @@ export default async function PrintPage({
 
       <section className="break-inside-avoid">
         <h2 className="mb-2 text-sm font-bold uppercase tracking-widest text-muted-foreground">
-          Bracket
+          {tournament.format === "multi_stage" ? "Stages" : "Bracket"}
         </h2>
-        <Bracket state={state} names={names} scoringMode={tournament.scoringMode} />
+        <Bracket
+          state={state}
+          names={names}
+          scoringMode={tournament.scoringMode}
+          expandAll
+        />
       </section>
     </div>
   );

@@ -1,5 +1,14 @@
 import type { EngineState } from "@/lib/engine";
+import { stageDisplayLabel } from "@/lib/engine";
 import { matchupName, type NameMap } from "@/lib/hub-helpers";
+
+/** Human label for a match's pipeline stage (multi_stage only). */
+function stageNameOf(state: EngineState, stageIndex: number | undefined): string {
+  if (state.stages && typeof stageIndex === "number") {
+    return stageDisplayLabel(state.stages, stageIndex);
+  }
+  return "";
+}
 
 function escape(value: string | number): string {
   const s = String(value);
@@ -18,13 +27,25 @@ export function tournamentCsv(
   name: string,
   state: EngineState,
   names: NameMap,
+  /** Multi-stage: limit the export to a single pipeline stage. */
+  stageIndex?: number | null,
 ): string {
-  const schedule: (string | number)[][] = [
-    ["Round", "Player A", "Player B", "Status", "Score A", "Score B", "Winner"],
-  ];
-  for (const m of [...state.matches].sort((a, b) => a.order - b.order)) {
+  const isMulti = state.stages !== null;
+  const header = isMulti
+    ? ["Stage", "Round", "Player A", "Player B", "Status", "Score A", "Score B", "Winner"]
+    : ["Round", "Player A", "Player B", "Status", "Score A", "Score B", "Winner"];
+  const schedule: (string | number)[][] = [header];
+  const matches = [...state.matches]
+    .filter(
+      (m) =>
+        stageIndex == null ||
+        stageIndex === undefined ||
+        m.stageIndex === stageIndex,
+    )
+    .sort((a, b) => a.order - b.order);
+  for (const m of matches) {
     const { a, b } = matchupName(m, names);
-    schedule.push([
+    const row = [
       m.label,
       a,
       b,
@@ -32,7 +53,8 @@ export function tournamentCsv(
       m.scoreA ?? "",
       m.scoreB ?? "",
       m.isDraw ? "Draw" : m.winnerId ? (names[m.winnerId] ?? "") : "",
-    ]);
+    ];
+    schedule.push(isMulti ? [stageNameOf(state, m.stageIndex), ...row] : row);
   }
 
   const standings: (string | number)[][] = [

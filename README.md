@@ -303,13 +303,14 @@ recomputes. Reinstating a player is one click.
 - **Dark-first** broadcast palette (broadcast red on a near-black scoreboard).
 - **Scoring mode** defaults to *Scored*; **seeding** to *Random*; **format** to
   *Single Elimination*; **tiebreaker** to *Points scored*; **AI tone** to *Hype*.
-- **Single game per match** (no best-of series in the MVP).
+- **Single game per match** by default; **best-of-3/5 series** can be enabled
+  per tournament for elimination matches (Match settings in the wizard).
 - **AI model:** the smallest current Claude model (`claude-haiku-4-5`) for fast,
   cheap previews; previews are cached and degrade to templates without a key.
 - **Group draw "manual"** is done via a per-player group selector (clear and
   reliable) rather than drag-and-drop; manual *seeding* uses true drag-rank.
-- **TV mode** refreshes itself every ~20s so it stays current without a manual
-  reload (live push is a Phase 2 upgrade — see below).
+- **TV mode** updates live via Supabase Realtime, with a 30s polling fallback if
+  the socket drops (a "Live / Reconnecting…" indicator shows which is active).
 - **Reproducible randomness:** every tournament stores an integer draw seed, so
   random draws and the random tiebreak are deterministic and reproducible.
 
@@ -317,17 +318,44 @@ recomputes. Reinstating a player is one click.
 
 ## Phase 2 roadmap
 
-Deferred for the MVP, designed to slot in cleanly:
+### Shipped
+
+- **Delete & archive tournaments** — hard delete (with a typed-name confirm for
+  in-progress events) plus soft-delete archiving and a "Show archived" toggle.
+- **Round & phase transition clarity** — a persistent phase bar, broadcast-style
+  transition banners, current-round highlighting, and a TV "Round Complete"
+  interstitial.
+- **Bulk player import** — paste-a-list or CSV/TXT upload with dedupe and a count
+  preview, for fast 128-player rosters.
+- **Templates / presets** — one-click setups (8-player single elim, 12-player
+  round robin, 16-player double elim, 32-player World Cup, 128-player mega
+  event) in `src/lib/templates.ts`.
+- **Duplicate tournament** — clone setup and player names into a fresh event.
+- **Notes / house rules** — optional free text shown on the hub and print view.
+- **Multi-stage group pipeline** — a new `multi_stage` format: a configurable
+  pipeline of group / round-robin / elimination stages that narrows the field to
+  a champion (e.g. 128 → 32 → 8 → winner). Lazy per-stage generation, namespaced
+  match keys, and a wizard timeline with live preview. See `src/lib/engine/multiStage.ts`.
+- **Per-stage export / print** — print sections and CSV stage column + filter for
+  multi-stage and group-knockout events.
+- **QR code + share card** — client-side QR (no external API) on the manage view
+  and dashboard, plus a downloadable branded share card.
+- **Mid-tournament player add** — organizers add late arrivals; the bracket
+  re-draws from the expanded pool (played results preserved).
+- **Parallel stations** — run up to 8 concurrent matches; the scoreboard and TV
+  mode show one "now playing" card per station.
+- **Best-of-N series** — per-tournament best-of-3/5 for elimination matches,
+  entered game-by-game with the series winner detected automatically.
+- **Supabase Realtime** — the hub and TV mode update live on score changes, with
+  a 30s polling fallback.
+- **Player self-service scoring** — optional mode where players submit results
+  via the public link for organizer approval (Approvals tab).
+
+### Still deferred
 
 - **Team / doubles support** — teams with rosters competing as a unit in any
   format, with team-level standings and awards, alongside the existing
   individual mode.
-- **Real-time + self-service scoring** — Supabase Realtime so the public hub and
-  TV mode update live without refresh, plus an optional mode where players with
-  the link submit their own results for organizer approval.
-- **Best-of-N series + parallel stations** — per-tournament best-of-3/5 matches
-  tracked game-by-game, and multiple stations so concurrent matches schedule and
-  display in parallel.
 - **Persistent players + AI recaps** — reusable player profiles with all-time
   stats across an organizer's events, plus AI-generated post-game recaps and a
   final tournament wrap-up story.

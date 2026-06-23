@@ -14,7 +14,8 @@ export type MainFormat =
   | "single_elim"
   | "double_elim"
   | "triple_elim"
-  | "group_knockout";
+  | "group_knockout"
+  | "multi_stage";
 
 export type SeedingMethod = "manual" | "random" | "seeding_rounds";
 
@@ -68,6 +69,8 @@ export interface GeneratedMatch {
   label: string;
   /** For group stage only: "A", "B", ... */
   groupKey?: string;
+  /** 0-based pipeline stage index for multi-stage tournaments. */
+  stageIndex?: number;
   aRef: SlotRef;
   bRef: SlotRef;
   /** Draws permitted (round robin / seeding) vs forced winner (elimination). */

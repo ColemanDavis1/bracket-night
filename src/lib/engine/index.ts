@@ -30,6 +30,12 @@ import {
 } from "./groups";
 import { championOf, isComplete, resolveMatches } from "./resolve";
 import { computeStandings, seedsFromStandings } from "./standings";
+import {
+  buildMultiStageState,
+  stageKind,
+  type StageConfig,
+  type StageView,
+} from "./multiStage";
 
 export * from "./types";
 export { makeRng, shuffle, newSeed } from "./rng";
@@ -38,6 +44,14 @@ export { computeStandings } from "./standings";
 export { resolveMatches, championOf, isComplete } from "./resolve";
 export { groupKey, groupKeyList, compareGroupKeys } from "./groups";
 export type { Advancer, GroupAssignment } from "./groups";
+export {
+  stageKind,
+  stageKindLabel,
+  type StageConfig,
+  type StageView,
+  type StageKindName,
+  type ElimFormat,
+} from "./multiStage";
 
 export interface TournamentConfig {
   format: MainFormat;
@@ -61,6 +75,9 @@ export interface TournamentConfig {
   groupDraw?: "random" | "manual";
   manualGroups?: GroupAssignment[];
   knockoutFormat?: "single_elim" | "double_elim" | "triple_elim";
+
+  /** multi_stage configuration: an ordered pipeline of stages. */
+  stages?: StageConfig[];
 }
 
 export type EnginePhase =
@@ -83,6 +100,14 @@ export interface EngineState {
   advancers: Advancer[] | null;
   championId: string | null;
   complete: boolean;
+  /** 0-based index of the currently active stage (multi-stage aware). */
+  activeStageIndex: number;
+  /** Label of the round currently in progress, e.g. "Winners Round 2". */
+  activeRoundLabel: string | null;
+  /** Set when a phase just finished and the next begins, for the banner. */
+  phaseTransition: { from: string; to: string } | null;
+  /** Per-stage views for multi_stage tournaments (null for single-format). */
+  stages: StageView[] | null;
 }
 
 function orderedSeedIds(seeded: Participant[]): string[] {
@@ -141,6 +166,11 @@ export function buildEngineState(
     seeds = isComplete(resolvedSeeding)
       ? seedsFromStandings(participants, resolvedSeeding, tiebreak, drawSeed)
       : null;
+  }
+
+  // --- Multi-stage pipeline (its own self-contained generation) ---
+  if (config.format === "multi_stage") {
+    return buildMultiStageEngineState(config, participants, results, seeds);
   }
 
   // --- Main competition ---
@@ -268,7 +298,7 @@ export function buildEngineState(
   const complete = matches.length > 0 && isComplete(matches);
   const phase = derivePhase(config, generated, matches, seeds, complete);
 
-  return {
+  const state: EngineState = {
     phase,
     matches,
     seeds,
@@ -279,7 +309,329 @@ export function buildEngineState(
     advancers,
     championId,
     complete,
+    activeStageIndex: 0,
+    activeRoundLabel: null,
+    phaseTransition: null,
+    stages: null,
   };
+  state.activeRoundLabel = currentRound(state)?.label ?? null;
+  state.activeStageIndex = activeStageIndexOf(state);
+  state.phaseTransition = phaseTransitionOf(state);
+  return state;
+}
+
+/** 1-based ordinal of a stage among stages sharing its kind. */
+function stageOrdinalWithinKind(stages: readonly StageView[], index: number): number {
+  const kind = stages[index]?.kind;
+  let n = 0;
+  for (let i = 0; i <= index; i++) if (stages[i]?.kind === kind) n++;
+  return n;
+}
+
+/**
+ * Display label for a stage, disambiguating repeats of the same kind
+ * (e.g. two group stages become "Group Stage 1" / "Group Stage 2").
+ */
+export function stageDisplayLabel(
+  stages: readonly StageView[],
+  index: number,
+): string {
+  const v = stages[index];
+  if (!v) return "";
+  const sameKind = stages.filter((s) => s.kind === v.kind).length;
+  return sameKind > 1
+    ? `${v.label} ${stageOrdinalWithinKind(stages, index)}`
+    : v.label;
+}
+
+/** Map a multi-stage view's kind onto the coarse EnginePhase for the hub. */
+function stagePhase(kind: ReturnType<typeof stageKind>): EnginePhase {
+  if (kind === "group") return "group";
+  if (kind === "round_robin") return "round_robin";
+  return "knockout";
+}
+
+/** Build the full EngineState for a multi_stage tournament. */
+function buildMultiStageEngineState(
+  config: TournamentConfig,
+  participants: readonly Participant[],
+  results: readonly MatchResult[],
+  seeds: string[] | null,
+): EngineState {
+  const { tiebreak, drawSeed } = config;
+  const ms = buildMultiStageState(
+    { stages: config.stages ?? [], tiebreak, drawSeed },
+    participants,
+    results,
+    seeds,
+  );
+
+  let generated = ms.generated.slice();
+  generated.forEach((m, i) => (m.order = i));
+  const matches = resolveMatches(generated, [], results, participants);
+  const overallStandings = computeStandings(
+    participants,
+    matches,
+    tiebreak,
+    drawSeed,
+  );
+
+  const activeView = ms.stages[ms.activeStageIndex];
+  const phase: EnginePhase = ms.complete
+    ? "complete"
+    : activeView
+      ? stagePhase(activeView.kind)
+      : "group";
+
+  const state: EngineState = {
+    phase,
+    matches,
+    seeds,
+    overallStandings,
+    seedingStandings: null,
+    groups: activeView?.groups ?? null,
+    groupStandings: activeView?.groupStandings ?? null,
+    advancers: null,
+    championId: ms.championId,
+    complete: ms.complete,
+    activeStageIndex: ms.activeStageIndex,
+    activeRoundLabel: null,
+    phaseTransition: null,
+    stages: ms.stages,
+  };
+  state.activeRoundLabel = currentRound(state)?.label ?? null;
+  state.phaseTransition = phaseTransitionOf(state);
+  return state;
+}
+
+// ---------------------------------------------------------------------------
+// Round & phase progress helpers (pure, used by the live hub + TV mode).
+// ---------------------------------------------------------------------------
+
+/** A contiguous run of matches that share a round label within one stage. */
+export interface RoundInfo {
+  key: string;
+  label: string;
+  stage: ResolvedMatch["stage"];
+  /** Lowest match order in the round (for sorting / auto-scroll). */
+  order: number;
+  matches: ResolvedMatch[];
+  done: number;
+  total: number;
+  complete: boolean;
+}
+
+/** Collapse elimination sub-brackets into a single "phase" for grouping. */
+function stageGroup(stage: ResolvedMatch["stage"]): string {
+  if (stage === "winners" || stage === "losers" || stage === "grand_final") {
+    return "knockout";
+  }
+  return stage;
+}
+
+function stageLabel(stage: ResolvedMatch["stage"]): string {
+  switch (stageGroup(stage)) {
+    case "seeding":
+      return "Seeding Rounds";
+    case "group":
+      return "Group Stage";
+    case "round_robin":
+      return "Round Robin";
+    case "knockout":
+      return "Knockout";
+    default:
+      return "Bracket";
+  }
+}
+
+function phaseStages(phase: EnginePhase): Set<ResolvedMatch["stage"]> {
+  switch (phase) {
+    case "seeding":
+      return new Set(["seeding"]);
+    case "round_robin":
+      return new Set(["round_robin"]);
+    case "group":
+      return new Set(["group"]);
+    case "knockout":
+    case "bracket":
+      return new Set(["winners", "losers", "grand_final", "knockout"]);
+    default:
+      return new Set([
+        "seeding",
+        "group",
+        "round_robin",
+        "winners",
+        "losers",
+        "grand_final",
+        "knockout",
+      ]);
+  }
+}
+
+export function phaseLabel(phase: EnginePhase): string {
+  switch (phase) {
+    case "seeding":
+      return "Seeding Rounds";
+    case "round_robin":
+      return "Round Robin";
+    case "group":
+      return "Group Stage";
+    case "knockout":
+      return "Knockout";
+    case "bracket":
+      return "Bracket";
+    case "complete":
+      return "Complete";
+  }
+}
+
+/** Break the schedule into rounds (contiguous matches sharing a label+stage). */
+export function roundsOf(state: EngineState): RoundInfo[] {
+  const sorted = state.matches
+    .filter((m) => !m.voided)
+    .slice()
+    .sort((a, b) => a.order - b.order);
+  const rounds: RoundInfo[] = [];
+  for (const m of sorted) {
+    const last = rounds[rounds.length - 1];
+    if (last && last.label === m.label && last.stage === m.stage) {
+      last.matches.push(m);
+    } else {
+      rounds.push({
+        key: `${m.stage}#${m.roundNumber}#${m.label}#${rounds.length}`,
+        label: m.label,
+        stage: m.stage,
+        order: m.order,
+        matches: [m],
+        done: 0,
+        total: 0,
+        complete: false,
+      });
+    }
+  }
+  for (const r of rounds) {
+    r.total = r.matches.length;
+    r.done = r.matches.filter(
+      (m) => m.status === "done" || m.status === "bye",
+    ).length;
+    r.complete = r.total > 0 && r.done === r.total;
+  }
+  return rounds;
+}
+
+/** The round currently being played (first incomplete; last if all done). */
+export function currentRound(state: EngineState): RoundInfo | null {
+  const rounds = roundsOf(state);
+  if (rounds.length === 0) return null;
+  return rounds.find((r) => !r.complete) ?? rounds[rounds.length - 1] ?? null;
+}
+
+/** All rounds that are 100% complete. */
+export function completedRounds(state: EngineState): RoundInfo[] {
+  return roundsOf(state).filter((r) => r.complete);
+}
+
+/** Match progress within the current phase, plus round position. */
+export function phaseProgress(state: EngineState): {
+  done: number;
+  total: number;
+  label: string;
+  roundNumber: number;
+  roundCount: number;
+} {
+  const stages = phaseStages(state.phase);
+  const phaseMatches = state.matches.filter(
+    (m) =>
+      !m.voided &&
+      stages.has(m.stage) &&
+      // Multi-stage: restrict progress to the stage currently in play.
+      (state.stages === null || m.stageIndex === state.activeStageIndex),
+  );
+  const done = phaseMatches.filter(
+    (m) => m.status === "done" || m.status === "bye",
+  ).length;
+  const total = phaseMatches.length;
+  const rounds = roundsOf(state).filter(
+    (r) =>
+      stages.has(r.stage) &&
+      (state.stages === null ||
+        r.matches[0]?.stageIndex === state.activeStageIndex),
+  );
+  const cur = currentRound(state);
+  const roundCount = rounds.length;
+  const roundNumber =
+    cur && rounds.length
+      ? Math.max(1, rounds.findIndex((r) => r.key === cur.key) + 1)
+      : roundCount;
+  return { done, total, label: phaseLabel(state.phase), roundNumber, roundCount };
+}
+
+/** Best-effort count of players still alive (in a ready/pending match). */
+export function playersRemaining(state: EngineState): number {
+  if (state.complete) return 1;
+  const alive = new Set<string>();
+  for (const m of state.matches) {
+    if (m.voided) continue;
+    if (m.status === "ready" || m.status === "pending") {
+      if (m.aId) alive.add(m.aId);
+      if (m.bId) alive.add(m.bId);
+    }
+  }
+  return alive.size;
+}
+
+function activeStageIndexOf(state: EngineState): number {
+  const cur = currentRound(state);
+  if (!cur) return 0;
+  const groups: string[] = [];
+  for (const r of roundsOf(state)) {
+    const g = stageGroup(r.stage);
+    if (!groups.includes(g)) groups.push(g);
+  }
+  return Math.max(0, groups.indexOf(stageGroup(cur.stage)));
+}
+
+/**
+ * Detect the moment a phase finishes and the next begins: the current round
+ * starts a different stage than the previous round, the previous round is fully
+ * complete, and the current round has not started yet.
+ */
+export function phaseTransitionOf(
+  state: EngineState,
+): { from: string; to: string } | null {
+  if (state.complete) return null;
+
+  // Multi-stage: a transition is the moment a stage finishes and the next one
+  // begins (handles same-kind stages, e.g. Group Stage 1 → Group Stage 2).
+  if (state.stages) {
+    const idx = state.activeStageIndex;
+    const prev = state.stages[idx - 1];
+    const cur = state.stages[idx];
+    if (prev?.complete && cur && !cur.started) {
+      const label = (v: StageView, n: number) =>
+        state.stages && state.stages.filter((s) => s.kind === v.kind).length > 1
+          ? `${v.label} ${stageOrdinalWithinKind(state.stages, n)}`
+          : v.label;
+      return { from: label(prev, idx - 1), to: label(cur, idx) };
+    }
+    return null;
+  }
+
+  const rounds = roundsOf(state);
+  const cur = currentRound(state);
+  if (!cur) return null;
+  const idx = rounds.findIndex((r) => r.key === cur.key);
+  if (idx <= 0) return null;
+  const prev = rounds[idx - 1];
+  if (!prev) return null;
+  if (
+    prev.complete &&
+    cur.done === 0 &&
+    stageGroup(cur.stage) !== stageGroup(prev.stage)
+  ) {
+    return { from: stageLabel(prev.stage), to: stageLabel(cur.stage) };
+  }
+  return null;
 }
 
 function derivePhase(

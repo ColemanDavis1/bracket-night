@@ -20,9 +20,14 @@ import { Bracket } from "./bracket";
 import { Ticker } from "./ticker";
 import { ExportBar } from "./export-bar";
 import { PlayersAdmin } from "./players-admin";
+import { PhaseBar } from "./phase-bar";
+import { ShareDialog } from "./share-dialog";
+import { LiveIndicator } from "./live-indicator";
+import { PendingApprovals } from "./pending-approvals";
 
 export function Hub({ data }: { data: HubData }) {
-  const { tournament, players, state, prevRanking, isOrganizer } = data;
+  const { tournament, players, state, prevRanking, isOrganizer, pending } = data;
+  const showPending = isOrganizer && tournament.selfServiceScoring;
   const names = nameMapOf(players);
   const ranking = state.overallStandings.map((r) => r.participantId);
 
@@ -38,6 +43,15 @@ export function Hub({ data }: { data: HubData }) {
             <BrandMark />
           </Link>
           <div className="flex items-center gap-2">
+            <LiveIndicator tournamentId={tournament.id} />
+            {isOrganizer ? (
+              <ShareDialog
+                slug={tournament.slug}
+                name={tournament.name}
+                gameName={tournament.gameName}
+                eventDate={tournament.eventDate}
+              />
+            ) : null}
             <Button asChild variant="outline" size="sm">
               <Link href={`/t/${tournament.slug}/tv`} target="_blank">
                 <Tv /> TV mode
@@ -53,6 +67,7 @@ export function Hub({ data }: { data: HubData }) {
       </header>
 
       <Ticker state={state} names={names} />
+      <PhaseBar state={state} />
 
       <main className="container py-6">
         <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
@@ -72,6 +87,14 @@ export function Hub({ data }: { data: HubData }) {
                 Live read-only hub. The organizer enters all scores.
               </p>
             ) : null}
+            {tournament.notes ? (
+              <div className="mt-3 max-w-prose rounded-lg border border-border bg-card/60 px-3 py-2 text-sm">
+                <span className="mr-1.5 font-semibold text-primary">House rules:</span>
+                <span className="whitespace-pre-wrap text-muted-foreground">
+                  {tournament.notes}
+                </span>
+              </div>
+            ) : null}
           </div>
           <ExportBar tournament={tournament} state={state} names={names} />
         </div>
@@ -81,7 +104,11 @@ export function Hub({ data }: { data: HubData }) {
             <TabsTrigger value="scoreboard">Scoreboard</TabsTrigger>
             {showBracket ? (
               <TabsTrigger value="bracket">
-                {tournament.format === "group_knockout" ? "Groups & Bracket" : "Bracket"}
+                {tournament.format === "group_knockout"
+                  ? "Groups & Bracket"
+                  : tournament.format === "multi_stage"
+                    ? "Stages"
+                    : "Bracket"}
               </TabsTrigger>
             ) : null}
             <TabsTrigger value="schedule">Schedule</TabsTrigger>
@@ -90,6 +117,14 @@ export function Hub({ data }: { data: HubData }) {
             <TabsTrigger value="previews">Previews</TabsTrigger>
             <TabsTrigger value="awards">Stats & Awards</TabsTrigger>
             {isOrganizer ? <TabsTrigger value="players">Players</TabsTrigger> : null}
+            {showPending ? (
+              <TabsTrigger value="pending">
+                Approvals
+                {pending.length > 0 ? (
+                  <Badge className="ml-1.5">{pending.length}</Badge>
+                ) : null}
+              </TabsTrigger>
+            ) : null}
           </TabsList>
 
           <TabsContent value="scoreboard">
@@ -98,6 +133,7 @@ export function Hub({ data }: { data: HubData }) {
               state={state}
               names={names}
               isOrganizer={isOrganizer}
+              pendingKeys={pending.map((p) => p.matchKey)}
             />
           </TabsContent>
 
@@ -118,6 +154,7 @@ export function Hub({ data }: { data: HubData }) {
               scoringMode={tournament.scoringMode}
               tournamentId={tournament.id}
               isOrganizer={isOrganizer}
+              seriesLength={tournament.seriesLength}
             />
           </TabsContent>
 
@@ -155,6 +192,17 @@ export function Hub({ data }: { data: HubData }) {
           {isOrganizer ? (
             <TabsContent value="players">
               <PlayersAdmin tournamentId={tournament.id} players={players} />
+            </TabsContent>
+          ) : null}
+
+          {showPending ? (
+            <TabsContent value="pending">
+              <PendingApprovals
+                pending={pending}
+                state={state}
+                names={names}
+                scoringMode={tournament.scoringMode}
+              />
             </TabsContent>
           ) : null}
         </Tabs>

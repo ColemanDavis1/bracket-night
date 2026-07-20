@@ -3,6 +3,9 @@ import {
   computeTournamentState,
   type MatchResultRow,
   type PlayerRow,
+  type RegistrantRow,
+  type StationAssignmentRow,
+  type TeamRow,
   type TournamentRow,
 } from "@/lib/db";
 import type { HubData } from "@/components/hub/types";
@@ -27,24 +30,50 @@ export async function loadHub(slug: string): Promise<{
   const tournament = t as TournamentRow;
 
   const selfService = tournament.config?.selfServiceScoring === true;
-  const [{ data: players }, { data: results }, { data: auth }, { data: pending }] =
-    await Promise.all([
-      supabase
-        .from("players")
-        .select("*")
-        .eq("tournament_id", tournament.id)
-        .order("position"),
-      supabase.from("match_results").select("*").eq("tournament_id", tournament.id),
-      supabase.auth.getUser(),
-      selfService
-        ? supabase
-            .from("pending_results")
-            .select("*")
-            .eq("tournament_id", tournament.id)
-            .eq("status", "pending")
-            .order("created_at")
-        : Promise.resolve({ data: [] as Record<string, unknown>[] }),
-    ]);
+  const teamMode = tournament.config?.entryMode === "team";
+  const [
+    { data: players },
+    { data: results },
+    { data: auth },
+    { data: pending },
+    { data: teams },
+    { data: registrants },
+    { data: stations },
+  ] = await Promise.all([
+    supabase
+      .from("players")
+      .select("*")
+      .eq("tournament_id", tournament.id)
+      .order("position"),
+    supabase.from("match_results").select("*").eq("tournament_id", tournament.id),
+    supabase.auth.getUser(),
+    selfService
+      ? supabase
+          .from("pending_results")
+          .select("*")
+          .eq("tournament_id", tournament.id)
+          .eq("status", "pending")
+          .order("created_at")
+      : Promise.resolve({ data: [] as Record<string, unknown>[] }),
+    teamMode
+      ? supabase
+          .from("teams")
+          .select("*")
+          .eq("tournament_id", tournament.id)
+          .order("position")
+      : Promise.resolve({ data: [] as TeamRow[] }),
+    teamMode
+      ? supabase
+          .from("registrants")
+          .select("*")
+          .eq("tournament_id", tournament.id)
+          .order("created_at")
+      : Promise.resolve({ data: [] as RegistrantRow[] }),
+    supabase
+      .from("station_assignments")
+      .select("*")
+      .eq("tournament_id", tournament.id),
+  ]);
 
   const playerRows = (players ?? []) as PlayerRow[];
   const { state } = computeTournamentState(
@@ -71,6 +100,11 @@ export async function loadHub(slug: string): Promise<{
       numStations: Math.min(8, Math.max(1, tournament.config?.numStations ?? 1)),
       seriesLength: tournament.config?.seriesLength ?? 1,
       selfServiceScoring: tournament.config?.selfServiceScoring ?? false,
+      entryMode: tournament.config?.entryMode ?? "individual",
+      teamSize: tournament.config?.teamSize ?? null,
+      signupEnabled: tournament.config?.signupEnabled ?? false,
+      googleFormUrl: tournament.config?.googleFormUrl ?? null,
+      stationLabels: tournament.config?.stationLabels ?? [],
     },
     players: playerRows.map((p) => ({
       id: p.id,
@@ -89,6 +123,36 @@ export async function loadHub(slug: string): Promise<{
       scoreB: (r.score_b as number | null) ?? null,
       isDraw: (r.is_draw as boolean) ?? false,
       createdAt: r.created_at as string,
+    })),
+    teams: ((teams ?? []) as TeamRow[]).map((t) => ({
+      id: t.id,
+      playerId: t.player_id,
+      name: t.name,
+      targetSize: t.target_size,
+      minSize: t.min_size,
+      maxSize: t.max_size,
+      locked: t.locked,
+      checkedIn: t.checked_in,
+      position: t.position,
+    })),
+    registrants: ((registrants ?? []) as RegistrantRow[]).map((r) => ({
+      id: r.id,
+      teamId: r.team_id,
+      name: r.name,
+      email: r.email,
+      phone: r.phone,
+      signupType: r.signup_type,
+      isCaptain: r.is_captain,
+      proposedTeam: r.proposed_team,
+      status: r.status,
+      source: r.source,
+      checkedIn: r.checked_in,
+    })),
+    stations: ((stations ?? []) as StationAssignmentRow[]).map((s) => ({
+      matchKey: s.match_key,
+      station: s.station,
+      state: s.state,
+      calledAt: s.called_at,
     })),
   };
 

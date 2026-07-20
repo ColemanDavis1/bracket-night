@@ -115,8 +115,21 @@ export function CreateWizard() {
   const [aiTone, setAiTone] = useState<AiTone>("hype");
   // Quick-start template selection
   const [templateId, setTemplateId] = useState<string>("custom");
+  // Team Builder (large events)
+  const [entryMode, setEntryMode] = useState<"individual" | "team">("individual");
+  const [teamTarget, setTeamTarget] = useState(4);
+  const [teamMin, setTeamMin] = useState(2);
+  const [teamMax, setTeamMax] = useState(6);
+  const [signupEnabled, setSignupEnabled] = useState(false);
+  const [googleFormUrl, setGoogleFormUrl] = useState("");
+  const [initialTeams, setInitialTeams] = useState<string[]>([]);
+  const [teamNameInput, setTeamNameInput] = useState("");
+  const [stationLabels, setStationLabels] = useState<string[]>([]);
 
   const validPlayers = players.filter((p) => p.name.trim());
+  const stepLabels = STEPS.map((l, i) =>
+    i === 1 && entryMode === "team" ? "Teams" : l,
+  );
 
   /** Pre-fill the wizard from a one-click preset (everything stays editable). */
   function applyTemplate(t: Template) {
@@ -175,7 +188,13 @@ export function CreateWizard() {
 
   function validateStep(): string | null {
     if (step === 0 && !name.trim()) return "Give your tournament a name.";
-    if (step === 1) {
+    if (step === 1 && entryMode === "team") {
+      if (teamMin > teamMax) return "Team min cannot exceed max.";
+      const names = initialTeams.map((t) => t.trim().toLowerCase());
+      if (new Set(names).size !== names.length)
+        return "Team names must be unique.";
+    }
+    if (step === 1 && entryMode === "individual") {
       if (validPlayers.length < 2) return "Add at least 2 players.";
       if (validPlayers.length > MAX_PLAYERS)
         return `Maximum ${MAX_PLAYERS} players.`;
@@ -232,6 +251,18 @@ export function CreateWizard() {
     if (numStations > 1) config.numStations = numStations;
     if (seriesLength !== 1) config.seriesLength = seriesLength;
     if (selfServiceScoring) config.selfServiceScoring = true;
+    if (numStations > 1) {
+      const labels = Array.from({ length: numStations }, (_, i) =>
+        (stationLabels[i] ?? "").trim(),
+      );
+      if (labels.some((l) => l)) config.stationLabels = labels;
+    }
+    if (entryMode === "team") {
+      config.entryMode = "team";
+      config.teamSize = { target: teamTarget, min: teamMin, max: teamMax };
+      if (signupEnabled) config.signupEnabled = true;
+      if (googleFormUrl.trim()) config.googleFormUrl = googleFormUrl.trim();
+    }
 
     const manualSeedOrderIndexes =
       seedingMethod === "manual"
@@ -256,7 +287,10 @@ export function CreateWizard() {
           name,
           gameName,
           eventDate: eventDate || null,
-          players: validPlayers.map((p) => ({ name: p.name.trim() })),
+          players:
+            entryMode === "team"
+              ? []
+              : validPlayers.map((p) => ({ name: p.name.trim() })),
           format,
           scoringMode,
           seedingMethod,
@@ -265,6 +299,7 @@ export function CreateWizard() {
           config,
           manualSeedOrderIndexes,
           manualGroupIndexes,
+          initialTeams: entryMode === "team" ? initialTeams : undefined,
         });
         // createTournament redirects on success.
       } catch (e) {
@@ -277,7 +312,7 @@ export function CreateWizard() {
     <div>
       {/* Step indicator */}
       <ol className="mb-8 flex flex-wrap gap-x-4 gap-y-1 text-xs font-semibold">
-        {STEPS.map((label, i) => (
+        {stepLabels.map((label, i) => (
           <li
             key={label}
             className={cn(
@@ -377,10 +412,150 @@ export function CreateWizard() {
                 {notes.length}/500
               </p>
             </Field>
+
+            <div className="mt-6">
+              <Label className="mb-2 block">Entry mode</Label>
+              <ChoiceCards
+                value={entryMode}
+                onChange={(v) => setEntryMode(v as "individual" | "team")}
+                options={[
+                  {
+                    value: "individual",
+                    title: "Individual",
+                    desc: "Each entrant is one person. The classic flow.",
+                  },
+                  {
+                    value: "team",
+                    title: "Team (large events)",
+                    desc: "People sign up solo or as teams; teams compete as one entrant. Adds sign-up links, check-in, and a call board.",
+                  },
+                ]}
+              />
+            </div>
           </Step>
         )}
 
-        {step === 1 && (
+        {step === 1 && entryMode === "team" && (
+          <Step
+            title="Teams"
+            desc="Set team sizes and open sign-ups. You can add teams and check people in on event day."
+          >
+            <div className="space-y-5">
+              <div className="rounded-lg border border-border p-4">
+                <Label className="mb-2 block">Team size (freeform within range)</Label>
+                <div className="grid grid-cols-3 gap-3">
+                  <Field label="Min">
+                    <Input
+                      type="number"
+                      min={1}
+                      value={teamMin}
+                      onChange={(e) => setTeamMin(Math.max(1, Number(e.target.value) || 1))}
+                    />
+                  </Field>
+                  <Field label="Target">
+                    <Input
+                      type="number"
+                      min={1}
+                      value={teamTarget}
+                      onChange={(e) =>
+                        setTeamTarget(Math.max(1, Number(e.target.value) || 1))
+                      }
+                    />
+                  </Field>
+                  <Field label="Max">
+                    <Input
+                      type="number"
+                      min={1}
+                      value={teamMax}
+                      onChange={(e) => setTeamMax(Math.max(1, Number(e.target.value) || 1))}
+                    />
+                  </Field>
+                </div>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Target drives auto-fill and fill progress; all three are editable
+                  later, including per team.
+                </p>
+              </div>
+
+              <div className="rounded-lg border border-border p-4">
+                <Toggle
+                  checked={signupEnabled}
+                  onChange={setSignupEnabled}
+                  label="Open a public sign-up page (share a link or QR)"
+                />
+                <Field label="Google Form URL (optional)" className="mt-4">
+                  <Input
+                    value={googleFormUrl}
+                    onChange={(e) => setGoogleFormUrl(e.target.value)}
+                    placeholder="https://forms.gle/…"
+                  />
+                </Field>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Paste your Google Form link to display and share it. Import the
+                  CSV export later from the team admin.
+                </p>
+              </div>
+
+              <div className="rounded-lg border border-border p-4">
+                <Label className="mb-2 block">Initial teams (optional)</Label>
+                <div className="flex gap-2">
+                  <Input
+                    value={teamNameInput}
+                    onChange={(e) => setTeamNameInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && teamNameInput.trim()) {
+                        setInitialTeams((t) => [...t, teamNameInput.trim()]);
+                        setTeamNameInput("");
+                      }
+                    }}
+                    placeholder="Team name"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      if (!teamNameInput.trim()) return;
+                      setInitialTeams((t) => [...t, teamNameInput.trim()]);
+                      setTeamNameInput("");
+                    }}
+                  >
+                    <Plus /> Add
+                  </Button>
+                </div>
+                {initialTeams.length ? (
+                  <ul className="mt-3 space-y-1.5">
+                    {initialTeams.map((t, i) => (
+                      <li
+                        key={`${t}-${i}`}
+                        className="flex items-center justify-between rounded-md border border-border/70 px-3 py-1.5 text-sm"
+                      >
+                        {t}
+                        <button
+                          type="button"
+                          className="text-muted-foreground hover:text-destructive"
+                          onClick={() =>
+                            setInitialTeams((prev) =>
+                              prev.filter((_, idx) => idx !== i),
+                            )
+                          }
+                          aria-label="Remove team"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    No initial teams — add them here or let sign-ups create them.
+                  </p>
+                )}
+              </div>
+            </div>
+          </Step>
+        )}
+
+        {step === 1 && entryMode === "individual" && (
           <Step
             title="Players"
             desc={`Add 2–${MAX_PLAYERS} players. ${validPlayers.length} entered.`}
@@ -695,6 +870,31 @@ export function CreateWizard() {
                   group games stay single-game.
                 </p>
               ) : null}
+              {numStations > 1 ? (
+                <div>
+                  <Label className="mb-2 block">Court / station names (optional)</Label>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {Array.from({ length: numStations }, (_, i) => (
+                      <Input
+                        key={i}
+                        value={stationLabels[i] ?? ""}
+                        onChange={(e) =>
+                          setStationLabels((prev) => {
+                            const next = prev.slice();
+                            next[i] = e.target.value;
+                            return next;
+                          })
+                        }
+                        placeholder={`Station ${i + 1}`}
+                      />
+                    ))}
+                  </div>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Named courts show on the call board (e.g. &quot;Court 1&quot;,
+                    &quot;Table A&quot;).
+                  </p>
+                </div>
+              ) : null}
               <Toggle
                 checked={selfServiceScoring}
                 onChange={setSelfServiceScoring}
@@ -748,7 +948,25 @@ export function CreateWizard() {
             <dl className="grid gap-x-6 gap-y-3 rounded-lg border border-border p-5 text-sm sm:grid-cols-2">
               <Review label="Name" value={name} />
               <Review label="Game" value={gameName || "—"} />
-              <Review label="Players" value={String(validPlayers.length)} />
+              {entryMode === "team" ? (
+                <>
+                  <Review label="Entry mode" value="Team" />
+                  <Review
+                    label="Initial teams"
+                    value={
+                      initialTeams.length
+                        ? String(initialTeams.length)
+                        : "Added later"
+                    }
+                  />
+                  <Review
+                    label="Sign-ups"
+                    value={signupEnabled ? "Open" : "Closed"}
+                  />
+                </>
+              ) : (
+                <Review label="Players" value={String(validPlayers.length)} />
+              )}
               <Review label="Scoring" value={SCORING_LABELS[scoringMode]} />
               <Review label="Seeding" value={SEEDING_LABELS[seedingMethod]} />
               <Review label="Format" value={FORMAT_LABELS[format]} />

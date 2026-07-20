@@ -24,10 +24,20 @@ import { PhaseBar } from "./phase-bar";
 import { ShareDialog } from "./share-dialog";
 import { LiveIndicator } from "./live-indicator";
 import { PendingApprovals } from "./pending-approvals";
+import { TeamsAdmin } from "./teams-admin";
+import { StationsAdmin } from "./stations-admin";
+import { canAddEntrant, TEAMS_LOCKED_MESSAGE } from "@/lib/teams/gate";
 
 export function Hub({ data }: { data: HubData }) {
   const { tournament, players, state, prevRanking, isOrganizer, pending } = data;
   const showPending = isOrganizer && tournament.selfServiceScoring;
+  const teamMode = tournament.entryMode === "team";
+  const showTeams = isOrganizer && teamMode;
+  const showStations =
+    isOrganizer && (tournament.numStations > 1 || teamMode);
+  const pendingSignups = data.registrants.filter(
+    (r) => r.status === "pending",
+  ).length;
   const names = nameMapOf(players);
   const ranking = state.overallStandings.map((r) => r.participantId);
 
@@ -50,6 +60,7 @@ export function Hub({ data }: { data: HubData }) {
                 name={tournament.name}
                 gameName={tournament.gameName}
                 eventDate={tournament.eventDate}
+                signupEnabled={teamMode && tournament.signupEnabled}
               />
             ) : null}
             <Button asChild variant="outline" size="sm">
@@ -116,7 +127,20 @@ export function Hub({ data }: { data: HubData }) {
             <TabsTrigger value="power">Power Rankings</TabsTrigger>
             <TabsTrigger value="previews">Previews</TabsTrigger>
             <TabsTrigger value="awards">Stats & Awards</TabsTrigger>
-            {isOrganizer ? <TabsTrigger value="players">Players</TabsTrigger> : null}
+            {showTeams ? (
+              <TabsTrigger value="teams">
+                Teams
+                {pendingSignups > 0 ? (
+                  <Badge className="ml-1.5">{pendingSignups}</Badge>
+                ) : null}
+              </TabsTrigger>
+            ) : null}
+            {showStations ? (
+              <TabsTrigger value="courts">Courts</TabsTrigger>
+            ) : null}
+            {isOrganizer && !teamMode ? (
+              <TabsTrigger value="players">Players</TabsTrigger>
+            ) : null}
             {showPending ? (
               <TabsTrigger value="pending">
                 Approvals
@@ -189,7 +213,36 @@ export function Hub({ data }: { data: HubData }) {
             <Awards state={state} names={names} />
           </TabsContent>
 
-          {isOrganizer ? (
+          {showTeams ? (
+            <TabsContent value="teams">
+              <TeamsAdmin
+                tournamentId={tournament.id}
+                slug={tournament.slug}
+                teams={data.teams}
+                registrants={data.registrants}
+                teamSize={tournament.teamSize}
+                signupEnabled={tournament.signupEnabled}
+                googleFormUrl={tournament.googleFormUrl}
+                canAdd={canAddEntrant(state)}
+                lockReason={TEAMS_LOCKED_MESSAGE}
+              />
+            </TabsContent>
+          ) : null}
+
+          {showStations ? (
+            <TabsContent value="courts">
+              <StationsAdmin
+                tournamentId={tournament.id}
+                state={state}
+                names={names}
+                stations={data.stations}
+                numStations={tournament.numStations}
+                stationLabels={tournament.stationLabels}
+              />
+            </TabsContent>
+          ) : null}
+
+          {isOrganizer && !teamMode ? (
             <TabsContent value="players">
               <PlayersAdmin tournamentId={tournament.id} players={players} />
             </TabsContent>

@@ -30,6 +30,7 @@ export function ShareDialog({
   hideTrigger = false,
   open,
   onOpenChange,
+  signupEnabled = false,
 }: {
   slug: string;
   name: string;
@@ -43,13 +44,18 @@ export function ShareDialog({
   hideTrigger?: boolean;
   open?: boolean;
   onOpenChange?: (v: boolean) => void;
+  /** Team mode: also show a QR to the public sign-up page. */
+  signupEnabled?: boolean;
 }) {
   const [url, setUrl] = useState("");
+  const [signupUrl, setSignupUrl] = useState("");
   const [copied, setCopied] = useState(false);
+  const [signupCopied, setSignupCopied] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setUrl(`${window.location.origin}/t/${slug}`);
+    setSignupUrl(`${window.location.origin}/t/${slug}/signup`);
   }, [slug]);
 
   async function copyLink() {
@@ -57,6 +63,16 @@ export function ShareDialog({
       await navigator.clipboard.writeText(url);
       setCopied(true);
       setTimeout(() => setCopied(false), 1800);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  async function copySignup() {
+    try {
+      await navigator.clipboard.writeText(signupUrl);
+      setSignupCopied(true);
+      setTimeout(() => setSignupCopied(false), 1800);
     } catch {
       /* ignore */
     }
@@ -118,6 +134,31 @@ export function ShareDialog({
               <Download /> Share card
             </Button>
           </div>
+
+          {signupEnabled ? (
+            <div className="w-full border-t border-border pt-4">
+              <p className="mb-3 text-center text-sm font-semibold">
+                Sign-up link
+              </p>
+              <div className="flex flex-col items-center gap-3">
+                <div className="rounded-xl bg-white p-3">
+                  {signupUrl ? (
+                    <QRCodeSVG value={signupUrl} size={150} level="M" />
+                  ) : (
+                    <div className="h-[150px] w-[150px]" />
+                  )}
+                </div>
+                <Button variant="outline" className="w-full" onClick={copySignup}>
+                  {signupCopied ? (
+                    <Check className="text-broadcast-green" />
+                  ) : (
+                    <Copy />
+                  )}
+                  {signupCopied ? "Copied" : "Copy sign-up link"}
+                </Button>
+              </div>
+            </div>
+          ) : null}
         </div>
 
         {/* Off-screen branded card rendered to PNG on demand. */}

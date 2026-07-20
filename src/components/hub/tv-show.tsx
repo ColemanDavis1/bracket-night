@@ -10,6 +10,12 @@ import { completedRounds } from "@/lib/engine";
 import type { HubData } from "./types";
 import { nameMapOf } from "@/lib/hub-helpers";
 import { useRealtimeRefresh } from "./use-realtime";
+import {
+  readyQueue,
+  stationLabel,
+  type StationAssignmentLike,
+  type StationMatch,
+} from "@/lib/stations/assign";
 
 const ROTATE_MS = 9000;
 
@@ -142,10 +148,105 @@ function buildScenes(
   }
 
   const stationCount = Math.min(8, Math.max(1, data.tournament.numStations ?? 1));
+
+  // Live call board driven by station_assignments (Team Builder). When courts
+  // are in use it replaces the ready-match "Now playing" scene.
+  const stationLabels = data.tournament.stationLabels;
+  const matchByKey = new Map(state.matches.map((m) => [m.key, m]));
+  const playingByStation = new Map<number, string>();
+  for (const s of data.stations) {
+    if (s.state === "playing" && s.station != null) {
+      playingByStation.set(s.station, s.matchKey);
+    }
+  }
+  const stationsInUse = playingByStation.size > 0;
+
+  if (stationsInUse) {
+    scenes.push({
+      label: "Call board",
+      node: (
+        <div>
+          <span className="mb-6 flex items-center justify-center gap-2 text-lg font-bold uppercase tracking-widest text-primary">
+            <Radio className="h-5 w-5 animate-pulse-red" /> Now playing
+          </span>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {Array.from({ length: stationCount }, (_, i) => {
+              const key = playingByStation.get(i);
+              const m = key ? matchByKey.get(key) : undefined;
+              const mm = m ? matchupName(m, names) : null;
+              return (
+                <div
+                  key={i}
+                  className={`rounded-2xl border p-6 text-center ${
+                    mm ? "border-primary/40 bg-card/60" : "border-border bg-card/20"
+                  }`}
+                >
+                  <p className="text-sm font-bold uppercase tracking-widest text-primary">
+                    {stationLabel(i, stationLabels)}
+                  </p>
+                  {mm ? (
+                    <div className="mt-3 grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+                      <p className="text-right text-2xl font-extrabold sm:text-3xl">
+                        {mm.a}
+                      </p>
+                      <span className="scorenum text-lg text-muted-foreground">
+                        VS
+                      </span>
+                      <p className="text-left text-2xl font-extrabold sm:text-3xl">
+                        {mm.b}
+                      </p>
+                    </div>
+                  ) : (
+                    <p className="mt-4 text-xl text-muted-foreground">Open</p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ),
+    });
+
+    const assignments: StationAssignmentLike[] = data.stations.map((s) => ({
+      matchKey: s.matchKey,
+      station: s.station,
+      state: s.state,
+    }));
+    const matches: StationMatch[] = state.matches.map((m) => ({
+      key: m.key,
+      order: m.order,
+      status: m.status,
+    }));
+    const queue = readyQueue(matches, assignments);
+    if (queue.length) {
+      scenes.push({
+        label: "Up next",
+        node: (
+          <div className="space-y-4 text-3xl">
+            {queue.slice(0, 5).map((q) => {
+              const m = matchByKey.get(q.key)!;
+              const { a, b } = matchupName(m, names);
+              return (
+                <div
+                  key={q.key}
+                  className="flex items-center justify-center gap-4 border-b border-border pb-3 font-bold"
+                >
+                  <span>{a}</span>
+                  <span className="text-xl text-muted-foreground">vs</span>
+                  <span>{b}</span>
+                </div>
+              );
+            })}
+          </div>
+        ),
+      });
+    }
+  }
+
   const ready = state.matches
     .filter((m) => m.status === "ready")
     .sort((a, b) => a.order - b.order);
-  const current = ready[0];
+  const current = stationsInUse ? undefined : ready[0];
   const live = ready.slice(0, stationCount);
   if (current && stationCount === 1) {
     const { a, b } = matchupName(current, names);
@@ -257,7 +358,7 @@ function buildScenes(
     });
   }
 
-  if (ready.length > stationCount) {
+  if (!stationsInUse && ready.length > stationCount) {
     scenes.push({
       label: "Up next",
       node: (

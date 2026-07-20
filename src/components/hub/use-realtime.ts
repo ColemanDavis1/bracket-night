@@ -50,6 +50,37 @@ export function useRealtimeRefresh(tournamentId: string): "live" | "polling" {
         },
         refresh,
       )
+      // Team Builder: live call board + roster board updates.
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "station_assignments",
+          filter: `tournament_id=eq.${tournamentId}`,
+        },
+        refresh,
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "teams",
+          filter: `tournament_id=eq.${tournamentId}`,
+        },
+        refresh,
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "registrants",
+          filter: `tournament_id=eq.${tournamentId}`,
+        },
+        refresh,
+      )
       .subscribe((status) => {
         setConnected(status === "SUBSCRIBED");
       });

@@ -4,6 +4,7 @@ import { nameMapOf } from "@/lib/hub-helpers";
 import { StandingsTable } from "@/components/hub/standings-table";
 import { Bracket } from "@/components/hub/bracket";
 import { PrintButton } from "@/components/hub/print-button";
+import { PathQr } from "@/components/qr-code";
 import { FORMAT_LABELS } from "@/lib/labels";
 
 export const dynamic = "force-dynamic";
@@ -39,6 +40,18 @@ export default async function PrintPage({
         <div className="mb-6 rounded-lg border border-border px-3 py-2 text-sm">
           <span className="mr-1.5 font-semibold">House rules:</span>
           <span className="whitespace-pre-wrap">{tournament.notes}</span>
+        </div>
+      ) : null}
+
+      {tournament.entryMode === "team" && tournament.signupEnabled ? (
+        <div className="mb-8 flex items-center gap-4 rounded-lg border border-border p-4">
+          <PathQr path={`/t/${tournament.slug}/signup`} size={120} />
+          <div>
+            <p className="font-semibold">Scan to sign up</p>
+            <p className="text-sm text-muted-foreground">
+              Register a full team or join solo. /t/{tournament.slug}/signup
+            </p>
+          </div>
         </div>
       ) : null}
 

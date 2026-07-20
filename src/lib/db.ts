@@ -31,6 +31,18 @@ export interface TournamentConfigJson {
   seriesLength?: 1 | 3 | 5;
   /** Allow players to submit results for approval (Feature 15). */
   selfServiceScoring?: boolean;
+
+  // --- Team Builder (large events) ---
+  /** Entrant model. Default "individual" preserves all existing behavior. */
+  entryMode?: "individual" | "team";
+  /** Freeform team sizes within min..max; target is advisory (auto-fill goal). */
+  teamSize?: { target: number; min: number; max: number };
+  /** Gates the public native sign-up page (also enforced by RLS). */
+  signupEnabled?: boolean;
+  /** Organizer-owned Google Form link to display/share. */
+  googleFormUrl?: string;
+  /** Human names for stations/courts, e.g. ["Court 1","Table A"]. */
+  stationLabels?: string[];
 }
 
 export interface TournamentRow {
@@ -82,6 +94,52 @@ export interface MatchResultRow {
   is_draw: boolean;
   forfeit: boolean;
   series_games?: SeriesGame[] | null;
+}
+
+/** A team: 1:1 with a bracket entrant (players row), plus roster metadata. */
+export interface TeamRow {
+  id: string;
+  tournament_id: string;
+  player_id: string | null;
+  name: string;
+  target_size: number | null;
+  min_size: number | null;
+  max_size: number | null;
+  locked: boolean;
+  checked_in: boolean;
+  checked_in_at: string | null;
+  position: number;
+  created_at: string;
+}
+
+/** One person: solo pool (team_id null) or a team member. */
+export interface RegistrantRow {
+  id: string;
+  tournament_id: string;
+  team_id: string | null;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  signup_type: "solo" | "team";
+  is_captain: boolean;
+  proposed_team: string | null;
+  status: "pending" | "approved" | "declined";
+  source: "native" | "google_csv" | "manual" | "walkin";
+  checked_in: boolean;
+  checked_in_at: string | null;
+  notes: string | null;
+  created_at: string;
+}
+
+/** Live per-match court/station state. Never read by the engine. */
+export interface StationAssignmentRow {
+  id: string;
+  tournament_id: string;
+  match_key: string;
+  station: number | null;
+  state: "queued" | "playing" | "done";
+  called_at: string | null;
+  updated_at: string;
 }
 
 export function toParticipants(players: readonly PlayerRow[]): Participant[] {

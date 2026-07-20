@@ -47,10 +47,17 @@ export function generateRoundRobin(
         let a = arr[i];
         let b = arr[n - 1 - i];
         if (a == null || b == null) continue;
+        // Matchup-based key: sorted id pair + leg number. Keying by the pairing
+        // (not the round/slot index) means recorded results survive a re-draw
+        // when a team is added mid-round-robin — the circle rotation shifts
+        // which slot a pairing lands in, but the pairing itself is stable.
+        const [x, y] = [a, b].slice().sort();
+        const leg = c + 1;
+        const key = `${keyPrefix}-${x}_${y}${leg > 1 ? `-L${leg}` : ""}`;
         // Alternate home/away on the second cycle for fairness of scoring.
         if (c === 1) [a, b] = [b, a];
         matches.push({
-          key: `${keyPrefix}-${roundNumber}-${i + 1}`,
+          key,
           stage,
           roundNumber,
           order: order++,

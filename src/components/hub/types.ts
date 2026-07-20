@@ -18,6 +18,17 @@ export interface HubTournament {
   seriesLength: 1 | 3 | 5;
   /** Player self-service score submission enabled (Feature 15). */
   selfServiceScoring: boolean;
+  // --- Team Builder ---
+  /** Entrant model. Defaults to "individual". */
+  entryMode: "individual" | "team";
+  /** Freeform team sizes (target advisory). */
+  teamSize: { target: number; min: number; max: number } | null;
+  /** Public native sign-up page enabled. */
+  signupEnabled: boolean;
+  /** Organizer's Google Form link, if any. */
+  googleFormUrl: string | null;
+  /** Human names for the stations/courts. */
+  stationLabels: string[];
 }
 
 export interface HubPlayer {
@@ -38,6 +49,42 @@ export interface HubPending {
   createdAt: string;
 }
 
+/** A team (bracket entrant + roster metadata). */
+export interface HubTeam {
+  id: string;
+  playerId: string | null;
+  name: string;
+  targetSize: number | null;
+  minSize: number | null;
+  maxSize: number | null;
+  locked: boolean;
+  checkedIn: boolean;
+  position: number;
+}
+
+/** One registered person (solo pool or team member). */
+export interface HubRegistrant {
+  id: string;
+  teamId: string | null;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  signupType: "solo" | "team";
+  isCaptain: boolean;
+  proposedTeam: string | null;
+  status: "pending" | "approved" | "declined";
+  source: "native" | "google_csv" | "manual" | "walkin";
+  checkedIn: boolean;
+}
+
+/** Live per-match court/station state. */
+export interface HubStation {
+  matchKey: string;
+  station: number | null;
+  state: "queued" | "playing" | "done";
+  calledAt: string | null;
+}
+
 export interface HubData {
   tournament: HubTournament;
   players: HubPlayer[];
@@ -46,4 +93,9 @@ export interface HubData {
   isOrganizer: boolean;
   /** Pending self-service submissions (empty unless the feature is on). */
   pending: HubPending[];
+  /** Team Builder roster (empty in individual mode). */
+  teams: HubTeam[];
+  registrants: HubRegistrant[];
+  /** Live court/station assignments (empty until any are set). */
+  stations: HubStation[];
 }

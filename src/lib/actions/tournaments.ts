@@ -8,6 +8,9 @@ import {
   computeTournamentState,
   type MatchResultRow,
   type PlayerRow,
+  type RegistrantRow,
+  type StationAssignmentRow,
+  type TeamRow,
   type TournamentRow,
 } from "@/lib/db";
 import type { TournamentConfigJson } from "@/lib/db";
@@ -20,6 +23,15 @@ import type {
   SeedingMethod,
 } from "@/lib/engine";
 import { newSeed } from "@/lib/engine";
+import { canAddEntrant, TEAMS_LOCKED_MESSAGE } from "@/lib/teams/gate";
+import { autoFillTeams as computeAutoFill } from "@/lib/teams/autofill";
+import { resolveTeamSize } from "@/lib/teams/sizes";
+import {
+  autoAssignStations as computeAutoAssign,
+  type StationAssignmentLike,
+  type StationMatch,
+} from "@/lib/stations/assign";
+import type { ParsedRegistrant } from "@/lib/import-registrants";
 
 export interface CreateTournamentInput {
   name: string;
@@ -36,6 +48,8 @@ export interface CreateTournamentInput {
   manualSeedOrderIndexes?: number[];
   /** Manual group assignment expressed as 0-based player indexes per group. */
   manualGroupIndexes?: { groupKey: string; playerIndexes: number[] }[];
+  /** Team mode: optional initial (empty) team names to seed. */
+  initialTeams?: string[];
 }
 
 async function requireUser() {
@@ -51,7 +65,13 @@ export async function createTournament(input: CreateTournamentInput) {
   const { supabase, user } = await requireUser();
 
   if (!input.name?.trim()) throw new Error("Tournament name is required");
-  if (input.players.length < MIN_PLAYERS || input.players.length > MAX_PLAYERS) {
+  // Team mode: teams are the bracket entrants and are finalized in later, so an
+  // event can start with zero players. Individual mode keeps the 2..128 rule.
+  const isTeamMode = input.config?.entryMode === "team";
+  if (
+    !isTeamMode &&
+    (input.players.length < MIN_PLAYERS || input.players.length > MAX_PLAYERS)
+  ) {
     throw new Error(
       `Tournaments need between ${MIN_PLAYERS} and ${MAX_PLAYERS} players`,
     );
@@ -89,18 +109,33 @@ export async function createTournament(input: CreateTournamentInput) {
   }
   if (!tournament) throw new Error("Could not create tournament");
 
-  // Insert players in entry order.
+  // Insert players in entry order (individual mode; team mode may have none).
   const playerRows = input.players.map((p, i) => ({
     tournament_id: tournament!.id,
     name: p.name.trim() || `Player ${i + 1}`,
     seed: p.seed ?? null,
     position: i,
   }));
-  const { data: inserted, error: pErr } = await supabase
-    .from("players")
-    .insert(playerRows)
-    .select();
-  if (pErr) throw pErr;
+  let inserted: PlayerRow[] | null = null;
+  if (playerRows.length) {
+    const { data, error: pErr } = await supabase
+      .from("players")
+      .insert(playerRows)
+      .select();
+    if (pErr) throw pErr;
+    inserted = data as PlayerRow[];
+  }
+
+  // Team mode: seed any initial (empty) teams the organizer named.
+  if (isTeamMode && input.initialTeams?.length) {
+    const teamRows = input.initialTeams
+      .map((name) => name.trim())
+      .filter(Boolean)
+      .map((name, i) => ({ tournament_id: tournament!.id, name, position: i }));
+    if (teamRows.length) {
+      await supabase.from("teams").insert(teamRows);
+    }
+  }
 
   // Resolve index-based config (manual seed order, manual groups) into ids.
   if (inserted) {
@@ -207,6 +242,8 @@ export async function enterResult(input: EnterResultInput) {
   );
   if (error) throw error;
 
+  // Entering a score frees the court the match was on (call board).
+  await freeStation(supabase, tournament.id, input.matchKey);
   await recomputeAndPersist(supabase, tournament);
   revalidatePath(`/t/${tournament.slug}/manage`);
   revalidatePath(`/t/${tournament.slug}`);
@@ -486,6 +523,61 @@ export async function submitPendingResult(input: SubmitPendingInput) {
   if (t) revalidatePath(`/t/${(t as { slug: string }).slug}`);
 }
 
+export interface SignupInput {
+  tournamentId: string;
+  mode: "solo" | "team";
+  teamName?: string;
+  /** For a team: [captain, ...teammates]. For solo: a single person. */
+  members: { name: string; email?: string; phone?: string }[];
+}
+
+/**
+ * Public native sign-up. No auth required — RLS only permits the insert when the
+ * tournament has sign-ups enabled and isn't complete, and only as pending/native
+ * rows. Full teams arrive as registrants sharing a proposed team name (the first
+ * is the captain); the organizer reconciles them into a team on approval.
+ */
+export async function submitSignup(input: SignupInput) {
+  const supabase = await createClient();
+  const clean = input.members
+    .map((m) => ({
+      name: m.name?.trim() ?? "",
+      email: m.email?.trim() || null,
+      phone: m.phone?.trim() || null,
+    }))
+    .filter((m) => m.name);
+  if (!clean.length) throw new Error("Please enter at least one name");
+  if (input.mode === "team" && !input.teamName?.trim()) {
+    throw new Error("Team name is required");
+  }
+
+  const rows = clean.map((m, i) => ({
+    tournament_id: input.tournamentId,
+    name: m.name,
+    email: m.email,
+    phone: m.phone,
+    signup_type: input.mode,
+    is_captain: input.mode === "team" && i === 0,
+    proposed_team: input.mode === "team" ? input.teamName!.trim() : null,
+    status: "pending" as const,
+    source: "native" as const,
+  }));
+
+  const { error } = await supabase.from("registrants").insert(rows);
+  if (error) {
+    throw new Error(
+      "Sign-ups aren't open for this event right now. Please check with the organizer.",
+    );
+  }
+
+  const { data: t } = await supabase
+    .from("tournaments")
+    .select("slug")
+    .eq("id", input.tournamentId)
+    .single();
+  if (t) revalidatePath(`/t/${(t as { slug: string }).slug}/manage`);
+}
+
 /** Organizer approves a pending submission: it becomes the real result. */
 export async function approvePendingResult(pendingId: string) {
   const { supabase, user } = await requireUser();
@@ -565,6 +657,668 @@ export async function rejectPendingResult(pendingId: string, reason?: string) {
       revalidatePath(`/t/${slug}`);
     }
   }
+}
+
+// ===========================================================================
+// Team Builder (large events): teams, registrants, check-in, no-show, stations
+//
+// A "people" layer on top of the engine. Teams compete as single bracket
+// entrants (one players row = one team); registrants are individual people.
+// None of this is read by the engine.
+// ===========================================================================
+
+type SupabaseClient = Awaited<ReturnType<typeof createClient>>;
+
+interface TeamSizesInput {
+  target?: number | null;
+  min?: number | null;
+  max?: number | null;
+}
+
+/** Load a team and assert the caller owns its tournament. */
+async function loadOwnedTeam(teamId: string) {
+  const { supabase, user } = await requireUser();
+  const { data: team } = await supabase
+    .from("teams")
+    .select("*")
+    .eq("id", teamId)
+    .single();
+  if (!team) throw new Error("Team not found");
+  const t = team as TeamRow;
+  const { data: tour } = await supabase
+    .from("tournaments")
+    .select("*")
+    .eq("id", t.tournament_id)
+    .single();
+  if (!tour) throw new Error("Tournament not found");
+  const tournament = tour as TournamentRow;
+  if (tournament.organizer_id !== user.id) throw new Error("Not authorized");
+  return { supabase, tournament, team: t };
+}
+
+/** Load a registrant and assert the caller owns its tournament. */
+async function loadOwnedRegistrant(registrantId: string) {
+  const { supabase, user } = await requireUser();
+  const { data: reg } = await supabase
+    .from("registrants")
+    .select("*")
+    .eq("id", registrantId)
+    .single();
+  if (!reg) throw new Error("Registrant not found");
+  const r = reg as RegistrantRow;
+  const { data: tour } = await supabase
+    .from("tournaments")
+    .select("*")
+    .eq("id", r.tournament_id)
+    .single();
+  if (!tour) throw new Error("Tournament not found");
+  const tournament = tour as TournamentRow;
+  if (tournament.organizer_id !== user.id) throw new Error("Not authorized");
+  return { supabase, tournament, registrant: r };
+}
+
+/** Recompute the live engine state for gate checks / no-show resolution. */
+async function engineStateFor(supabase: SupabaseClient, tournament: TournamentRow) {
+  const [{ data: players }, { data: results }] = await Promise.all([
+    supabase.from("players").select("*").eq("tournament_id", tournament.id),
+    supabase.from("match_results").select("*").eq("tournament_id", tournament.id),
+  ]);
+  return computeTournamentState(
+    tournament,
+    (players ?? []) as PlayerRow[],
+    (results ?? []) as MatchResultRow[],
+  ).state;
+}
+
+/** Mark a station free when its match is scored/forfeited. Best-effort. */
+async function freeStation(
+  supabase: SupabaseClient,
+  tournamentId: string,
+  matchKey: string,
+) {
+  await supabase
+    .from("station_assignments")
+    .update({ state: "done" })
+    .eq("tournament_id", tournamentId)
+    .eq("match_key", matchKey);
+}
+
+function reval(tournament: TournamentRow) {
+  revalidatePath(`/t/${tournament.slug}/manage`);
+  revalidatePath(`/t/${tournament.slug}`);
+}
+
+/** Patch team-mode config: entry mode, sizes, sign-ups, form URL, court names. */
+export async function setTeamMode(
+  tournamentId: string,
+  patch: {
+    entryMode?: "individual" | "team";
+    teamSize?: { target: number; min: number; max: number };
+    signupEnabled?: boolean;
+    googleFormUrl?: string;
+    stationLabels?: string[];
+  },
+) {
+  const { supabase, tournament } = await loadOwned(tournamentId);
+  const config: TournamentConfigJson = { ...(tournament.config ?? {}) };
+  if (patch.entryMode !== undefined) config.entryMode = patch.entryMode;
+  if (patch.teamSize !== undefined) config.teamSize = patch.teamSize;
+  if (patch.signupEnabled !== undefined) config.signupEnabled = patch.signupEnabled;
+  if (patch.googleFormUrl !== undefined) {
+    config.googleFormUrl = patch.googleFormUrl.trim() || undefined;
+  }
+  if (patch.stationLabels !== undefined) {
+    config.stationLabels = patch.stationLabels.map((s) => s.trim());
+  }
+  const { error } = await supabase
+    .from("tournaments")
+    .update({ config })
+    .eq("id", tournament.id);
+  if (error) throw error;
+  reval(tournament);
+}
+
+export async function createTeam(
+  tournamentId: string,
+  input: { name: string; sizes?: TeamSizesInput },
+) {
+  const { supabase, tournament } = await loadOwned(tournamentId);
+  const name = input.name?.trim();
+  if (!name) throw new Error("Team name is required");
+  const state = await engineStateFor(supabase, tournament);
+  if (!canAddEntrant(state)) throw new Error(TEAMS_LOCKED_MESSAGE);
+
+  const { data: existing } = await supabase
+    .from("teams")
+    .select("position")
+    .eq("tournament_id", tournament.id);
+  const nextPosition =
+    ((existing ?? []) as { position: number }[]).reduce(
+      (m, r) => Math.max(m, r.position),
+      -1,
+    ) + 1;
+
+  const { error } = await supabase.from("teams").insert({
+    tournament_id: tournament.id,
+    name,
+    position: nextPosition,
+    target_size: input.sizes?.target ?? null,
+    min_size: input.sizes?.min ?? null,
+    max_size: input.sizes?.max ?? null,
+  });
+  if (error) throw error;
+  reval(tournament);
+}
+
+export async function updateTeam(
+  teamId: string,
+  patch: { name?: string; sizes?: TeamSizesInput; locked?: boolean },
+) {
+  const { supabase, tournament, team } = await loadOwnedTeam(teamId);
+  const upd: Record<string, unknown> = {};
+  if (patch.name !== undefined) {
+    const n = patch.name.trim();
+    if (!n) throw new Error("Team name is required");
+    upd.name = n;
+  }
+  if (patch.locked !== undefined) upd.locked = patch.locked;
+  if (patch.sizes) {
+    if ("target" in patch.sizes) upd.target_size = patch.sizes.target ?? null;
+    if ("min" in patch.sizes) upd.min_size = patch.sizes.min ?? null;
+    if ("max" in patch.sizes) upd.max_size = patch.sizes.max ?? null;
+  }
+  if (Object.keys(upd).length) {
+    await supabase.from("teams").update(upd).eq("id", teamId);
+  }
+  // Keep the bracket entrant's name in sync if this team is finalized.
+  if (upd.name && team.player_id) {
+    await supabase
+      .from("players")
+      .update({ name: upd.name })
+      .eq("id", team.player_id);
+    await recomputeAndPersist(supabase, tournament);
+  }
+  reval(tournament);
+}
+
+export async function deleteTeam(teamId: string) {
+  const { supabase, tournament, team } = await loadOwnedTeam(teamId);
+  if (team.player_id) {
+    const state = await engineStateFor(supabase, tournament);
+    if (!canAddEntrant(state)) {
+      throw new Error(
+        "Cannot remove a finalized team once the knockout round has started",
+      );
+    }
+    // Remove the bracket entrant so it leaves the draw (triggers a re-derive).
+    await supabase
+      .from("players")
+      .delete()
+      .eq("id", team.player_id)
+      .eq("tournament_id", tournament.id);
+  }
+  // Return any members to the solo pool, then delete the team.
+  await supabase.from("registrants").update({ team_id: null }).eq("team_id", teamId);
+  await supabase.from("teams").delete().eq("id", teamId);
+  await recomputeAndPersist(supabase, tournament);
+  reval(tournament);
+}
+
+export async function addRegistrant(
+  tournamentId: string,
+  input: {
+    name: string;
+    email?: string;
+    phone?: string;
+    signupType: "solo" | "team";
+    teamId?: string | null;
+    source?: "native" | "google_csv" | "manual" | "walkin";
+    isCaptain?: boolean;
+  },
+) {
+  const { supabase, tournament } = await loadOwned(tournamentId);
+  const name = input.name?.trim();
+  if (!name) throw new Error("Name is required");
+  const { error } = await supabase.from("registrants").insert({
+    tournament_id: tournament.id,
+    team_id: input.teamId ?? null,
+    name,
+    email: input.email?.trim() || null,
+    phone: input.phone?.trim() || null,
+    signup_type: input.signupType,
+    is_captain: input.isCaptain ?? false,
+    // Organizer-entered people are trusted (no approval queue round-trip).
+    status: "approved",
+    source: input.source ?? "manual",
+  });
+  if (error) throw error;
+  reval(tournament);
+}
+
+export async function assignRegistrantToTeam(
+  registrantId: string,
+  teamId: string | null,
+) {
+  const { supabase, tournament } = await loadOwnedRegistrant(registrantId);
+  if (teamId) {
+    const { data: team } = await supabase
+      .from("teams")
+      .select("*")
+      .eq("id", teamId)
+      .eq("tournament_id", tournament.id)
+      .single();
+    if (!team) throw new Error("Team not found");
+    const t = team as TeamRow;
+    if (t.locked) throw new Error("That team's roster is locked");
+    const { count } = await supabase
+      .from("registrants")
+      .select("id", { count: "exact", head: true })
+      .eq("team_id", teamId);
+    const size = resolveTeamSize(t, tournament.config?.teamSize);
+    if ((count ?? 0) >= size.max) {
+      throw new Error(`That team is already at its max of ${size.max}`);
+    }
+  }
+  await supabase
+    .from("registrants")
+    .update({ team_id: teamId })
+    .eq("id", registrantId);
+  reval(tournament);
+}
+
+/** Balance the approved solo pool across teams toward their target sizes. */
+export async function autoFillTeams(tournamentId: string) {
+  const { supabase, tournament } = await loadOwned(tournamentId);
+  const [{ data: teams }, { data: regs }] = await Promise.all([
+    supabase
+      .from("teams")
+      .select("*")
+      .eq("tournament_id", tournament.id)
+      .order("position"),
+    supabase.from("registrants").select("*").eq("tournament_id", tournament.id),
+  ]);
+  const teamRows = (teams ?? []) as TeamRow[];
+  const regRows = (regs ?? []) as RegistrantRow[];
+
+  const counts = new Map<string, number>();
+  for (const r of regRows) {
+    if (r.team_id) counts.set(r.team_id, (counts.get(r.team_id) ?? 0) + 1);
+  }
+  const soloIds = regRows
+    .filter((r) => !r.team_id && r.status === "approved")
+    .map((r) => r.id);
+
+  const cfg = tournament.config?.teamSize;
+  const fillTeams = teamRows.map((t) => {
+    const size = resolveTeamSize(t, cfg);
+    return {
+      id: t.id,
+      currentCount: counts.get(t.id) ?? 0,
+      target: size.target,
+      max: size.max,
+      locked: t.locked,
+    };
+  });
+
+  const { assignments } = computeAutoFill(soloIds, fillTeams);
+  const byTeam = new Map<string, string[]>();
+  for (const a of assignments) {
+    const list = byTeam.get(a.teamId) ?? [];
+    list.push(a.registrantId);
+    byTeam.set(a.teamId, list);
+  }
+  for (const [teamId, ids] of byTeam) {
+    await supabase.from("registrants").update({ team_id: teamId }).in("id", ids);
+  }
+  reval(tournament);
+}
+
+export async function approveRegistrant(registrantId: string) {
+  const { supabase, tournament, registrant } = await loadOwnedRegistrant(registrantId);
+  let teamId = registrant.team_id;
+  // A full-team sign-up carries a proposed team name; materialize/attach a team.
+  if (!teamId && registrant.signup_type === "team" && registrant.proposed_team) {
+    const { data: existing } = await supabase
+      .from("teams")
+      .select("*")
+      .eq("tournament_id", tournament.id)
+      .eq("name", registrant.proposed_team)
+      .limit(1);
+    if (existing && existing.length) {
+      teamId = (existing[0] as TeamRow).id;
+    } else {
+      const { data: pos } = await supabase
+        .from("teams")
+        .select("position")
+        .eq("tournament_id", tournament.id);
+      const nextPosition =
+        ((pos ?? []) as { position: number }[]).reduce(
+          (m, r) => Math.max(m, r.position),
+          -1,
+        ) + 1;
+      const { data: created } = await supabase
+        .from("teams")
+        .insert({
+          tournament_id: tournament.id,
+          name: registrant.proposed_team,
+          position: nextPosition,
+        })
+        .select()
+        .single();
+      teamId = created ? (created as TeamRow).id : null;
+    }
+  }
+  await supabase
+    .from("registrants")
+    .update({ status: "approved", team_id: teamId })
+    .eq("id", registrantId);
+  reval(tournament);
+}
+
+export async function declineRegistrant(registrantId: string) {
+  const { supabase, tournament } = await loadOwnedRegistrant(registrantId);
+  await supabase
+    .from("registrants")
+    .update({ status: "declined" })
+    .eq("id", registrantId);
+  reval(tournament);
+}
+
+/** Bulk insert people parsed from a Google Form CSV, held for approval. */
+export async function importRegistrantsCsv(
+  tournamentId: string,
+  rows: ParsedRegistrant[],
+) {
+  const { supabase, tournament } = await loadOwned(tournamentId);
+  if (!rows.length) return;
+  const insertRows = rows
+    .filter((r) => r.name?.trim())
+    .map((r) => ({
+      tournament_id: tournament.id,
+      name: r.name.trim(),
+      email: r.email?.trim() || null,
+      phone: r.phone?.trim() || null,
+      signup_type: r.signupType,
+      is_captain: r.isCaptain ?? false,
+      proposed_team: r.signupType === "team" ? (r.teamName ?? null) : null,
+      status: "pending",
+      source: "google_csv",
+    }));
+  const { error } = await supabase.from("registrants").insert(insertRows);
+  if (error) throw error;
+  reval(tournament);
+}
+
+// ------------------------------ Check-in -----------------------------------
+
+export async function setTeamCheckedIn(teamId: string, checkedIn: boolean) {
+  const { supabase, tournament } = await loadOwnedTeam(teamId);
+  await supabase
+    .from("teams")
+    .update({
+      checked_in: checkedIn,
+      checked_in_at: checkedIn ? new Date().toISOString() : null,
+    })
+    .eq("id", teamId);
+  reval(tournament);
+}
+
+export async function setRegistrantCheckedIn(
+  registrantId: string,
+  checkedIn: boolean,
+) {
+  const { supabase, tournament } = await loadOwnedRegistrant(registrantId);
+  await supabase
+    .from("registrants")
+    .update({
+      checked_in: checkedIn,
+      checked_in_at: checkedIn ? new Date().toISOString() : null,
+    })
+    .eq("id", registrantId);
+  reval(tournament);
+}
+
+export async function checkInWholeTeam(teamId: string) {
+  const { supabase, tournament } = await loadOwnedTeam(teamId);
+  const now = new Date().toISOString();
+  await supabase
+    .from("teams")
+    .update({ checked_in: true, checked_in_at: now })
+    .eq("id", teamId);
+  await supabase
+    .from("registrants")
+    .update({ checked_in: true, checked_in_at: now })
+    .eq("team_id", teamId);
+  reval(tournament);
+}
+
+/**
+ * Finalize a team into a bracket entrant: create/link a players row (reusing
+ * addPlayer's cap/uniqueness/position logic), then recompute. Only finalized
+ * teams enter the bracket. Blocked once the knockout round has started.
+ */
+export async function finalizeTeam(teamId: string) {
+  const { supabase, tournament, team } = await loadOwnedTeam(teamId);
+  if (team.player_id) return; // already finalized
+  const state = await engineStateFor(supabase, tournament);
+  if (!canAddEntrant(state)) throw new Error(TEAMS_LOCKED_MESSAGE);
+
+  const name = team.name.trim();
+  const { data: existing } = await supabase
+    .from("players")
+    .select("name, position")
+    .eq("tournament_id", tournament.id);
+  const rows = (existing ?? []) as { name: string; position: number }[];
+  if (rows.length >= MAX_PLAYERS) throw new Error(`Maximum ${MAX_PLAYERS} teams`);
+  if (rows.some((p) => p.name.trim().toLowerCase() === name.toLowerCase())) {
+    throw new Error("A team with that name is already in the bracket");
+  }
+  const nextPosition = rows.reduce((m, p) => Math.max(m, p.position), -1) + 1;
+
+  const { data: player, error } = await supabase
+    .from("players")
+    .insert({
+      tournament_id: tournament.id,
+      name,
+      seed: null,
+      position: nextPosition,
+      withdrawn: false,
+    })
+    .select()
+    .single();
+  if (error) throw error;
+
+  await supabase
+    .from("teams")
+    .update({ player_id: (player as PlayerRow).id })
+    .eq("id", teamId);
+  await recomputeAndPersist(supabase, tournament);
+  reval(tournament);
+}
+
+// --------------------------- No-show / forfeit ------------------------------
+
+/**
+ * Record a results-based forfeit: the present opponent is set as the winner so
+ * the engine advances them normally. No engine change required. If both sides
+ * are no-shows the match is voided (no winner) rather than crowning one.
+ */
+export async function recordNoShow(
+  tournamentId: string,
+  input: { matchKey: string; noShowSide: "a" | "b" | "both" },
+) {
+  const { supabase, tournament } = await loadOwned(tournamentId);
+  const state = await engineStateFor(supabase, tournament);
+  const match = state.matches.find((m) => m.key === input.matchKey);
+  if (!match) throw new Error("Match not found");
+
+  let winnerId: string | null;
+  let isDraw = false;
+  if (input.noShowSide === "both") {
+    winnerId = null;
+    isDraw = true;
+  } else {
+    winnerId = input.noShowSide === "a" ? match.bId : match.aId;
+    if (!winnerId) throw new Error("The present side is not determined yet");
+  }
+
+  const { error } = await supabase.from("match_results").upsert(
+    {
+      tournament_id: tournament.id,
+      match_key: input.matchKey,
+      winner_player_id: winnerId,
+      score_a: null,
+      score_b: null,
+      is_draw: isDraw,
+      forfeit: true,
+      series_games: null,
+    },
+    { onConflict: "tournament_id,match_key" },
+  );
+  if (error) throw error;
+  await freeStation(supabase, tournament.id, input.matchKey);
+  await recomputeAndPersist(supabase, tournament);
+  reval(tournament);
+}
+
+/** Round-1 cleanup: forfeit every ready match whose team hasn't checked in. */
+export async function markUncheckedAsNoShow(tournamentId: string) {
+  const { supabase, tournament } = await loadOwned(tournamentId);
+  const [{ data: teams }, state] = await Promise.all([
+    supabase.from("teams").select("*").eq("tournament_id", tournament.id),
+    engineStateFor(supabase, tournament),
+  ]);
+  const checkedInByPlayer = new Map<string, boolean>();
+  for (const t of (teams ?? []) as TeamRow[]) {
+    if (t.player_id) checkedInByPlayer.set(t.player_id, t.checked_in);
+  }
+  // Unknown players (individual mode) are treated as present.
+  const present = (id: string | null) =>
+    id ? (checkedInByPlayer.get(id) ?? true) : true;
+
+  const upserts = state.matches
+    .filter((m) => m.status === "ready")
+    .filter((m) => !present(m.aId) || !present(m.bId))
+    .map((m) => {
+      const aIn = present(m.aId);
+      const bIn = present(m.bId);
+      const bothOut = !aIn && !bIn;
+      return {
+        tournament_id: tournament.id,
+        match_key: m.key,
+        winner_player_id: bothOut ? null : aIn ? m.aId : m.bId,
+        score_a: null,
+        score_b: null,
+        is_draw: bothOut,
+        forfeit: true,
+        series_games: null,
+      };
+    });
+
+  if (upserts.length) {
+    const { error } = await supabase
+      .from("match_results")
+      .upsert(upserts, { onConflict: "tournament_id,match_key" });
+    if (error) throw error;
+    await recomputeAndPersist(supabase, tournament);
+  }
+  reval(tournament);
+}
+
+// ------------------------------- Stations ----------------------------------
+
+export async function assignMatchToStation(
+  tournamentId: string,
+  input: { matchKey: string; station: number | null },
+) {
+  const { supabase, tournament } = await loadOwned(tournamentId);
+  await supabase.from("station_assignments").upsert(
+    {
+      tournament_id: tournament.id,
+      match_key: input.matchKey,
+      station: input.station,
+      state: "queued",
+      called_at: null,
+    },
+    { onConflict: "tournament_id,match_key" },
+  );
+  reval(tournament);
+}
+
+export async function setMatchState(
+  tournamentId: string,
+  input: { matchKey: string; state: "queued" | "playing" | "done" },
+) {
+  const { supabase, tournament } = await loadOwned(tournamentId);
+  await supabase.from("station_assignments").upsert(
+    {
+      tournament_id: tournament.id,
+      match_key: input.matchKey,
+      state: input.state,
+      called_at: input.state === "playing" ? new Date().toISOString() : null,
+    },
+    { onConflict: "tournament_id,match_key" },
+  );
+  reval(tournament);
+}
+
+/** Assign a match to a court and mark it playing (call to court). */
+export async function callMatchToStation(
+  tournamentId: string,
+  input: { matchKey: string; station: number },
+) {
+  const { supabase, tournament } = await loadOwned(tournamentId);
+  await supabase.from("station_assignments").upsert(
+    {
+      tournament_id: tournament.id,
+      match_key: input.matchKey,
+      station: input.station,
+      state: "playing",
+      called_at: new Date().toISOString(),
+    },
+    { onConflict: "tournament_id,match_key" },
+  );
+  reval(tournament);
+}
+
+/** Fill every open court from the ready-match queue. */
+export async function autoAssignStations(tournamentId: string) {
+  const { supabase, tournament } = await loadOwned(tournamentId);
+  const numStations = Math.min(
+    8,
+    Math.max(1, tournament.config?.numStations ?? 1),
+  );
+  const [state, { data: assigns }] = await Promise.all([
+    engineStateFor(supabase, tournament),
+    supabase
+      .from("station_assignments")
+      .select("*")
+      .eq("tournament_id", tournament.id),
+  ]);
+  const matches: StationMatch[] = state.matches.map((m) => ({
+    key: m.key,
+    order: m.order,
+    status: m.status,
+  }));
+  const existing: StationAssignmentLike[] = (
+    (assigns ?? []) as StationAssignmentRow[]
+  ).map((a) => ({ matchKey: a.match_key, station: a.station, state: a.state }));
+
+  const placements = computeAutoAssign(matches, existing, numStations);
+  const now = new Date().toISOString();
+  if (placements.length) {
+    await supabase.from("station_assignments").upsert(
+      placements.map((p) => ({
+        tournament_id: tournament.id,
+        match_key: p.matchKey,
+        station: p.station,
+        state: "playing",
+        called_at: now,
+      })),
+      { onConflict: "tournament_id,match_key" },
+    );
+  }
+  reval(tournament);
 }
 
 export async function signOut() {

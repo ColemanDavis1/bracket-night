@@ -1,18 +1,29 @@
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { fetchWithTimeout, hasAuthCookie } from "@/lib/middleware-auth";
 
 /**
  * Refreshes the Supabase auth session cookie on navigation so Server
  * Components always see a valid session. Public routes still work for
  * anonymous visitors — this only keeps the cookie fresh.
+ *
+ * `getUser()` hits the Auth API. On Vercel Edge a hung fetch exceeds the
+ * middleware budget and the whole site 504s (`MIDDLEWARE_INVOCATION_TIMEOUT`).
+ * Skip the call when there is no session cookie, and abort it if Auth is slow.
  */
+
 export async function middleware(request: NextRequest) {
   let response = NextResponse.next({ request });
 
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!url || !key || !hasAuthCookie(request.cookies.getAll())) {
+    return response;
+  }
+
+  try {
+    const supabase = createServerClient(url, key, {
+      global: { fetch: fetchWithTimeout },
       cookies: {
         getAll() {
           return request.cookies.getAll();
@@ -33,10 +44,13 @@ export async function middleware(request: NextRequest) {
           }
         },
       },
-    },
-  );
+    });
 
-  await supabase.auth.getUser();
+    await supabase.auth.getUser();
+  } catch {
+    // Session refresh must never take down the page. Pages still call getUser().
+  }
+
   return response;
 }
 

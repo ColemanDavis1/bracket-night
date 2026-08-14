@@ -25,7 +25,18 @@ import type {
 import { newSeed } from "@/lib/engine";
 import { canAddEntrant, TEAMS_LOCKED_MESSAGE } from "@/lib/teams/gate";
 import { autoFillTeams as computeAutoFill } from "@/lib/teams/autofill";
-import { resolveTeamSize } from "@/lib/teams/sizes";
+import {
+  capacityError,
+  normalizeTeamSize,
+  resolveTeamSize,
+} from "@/lib/teams/sizes";
+import {
+  rebuildBlockedMessage,
+  sanitizeSettingsPatch,
+  structuralChanges,
+  type SettingsPatch,
+  type SettingsSnapshot,
+} from "@/lib/tournament-settings";
 import {
   autoAssignStations as computeAutoAssign,
   type StationAssignmentLike,
@@ -551,6 +562,29 @@ export async function submitSignup(input: SignupInput) {
     throw new Error("Team name is required");
   }
 
+  // Enforce the roster cap here too: the form caps its own inputs, but a team
+  // can also sign up across several submissions under the same name.
+  if (input.mode === "team") {
+    const teamName = input.teamName!.trim();
+    const { data: t } = await supabase
+      .from("tournaments")
+      .select("config")
+      .eq("id", input.tournamentId)
+      .single();
+    const size = resolveTeamSize(
+      { target_size: null, min_size: null, max_size: null },
+      (t as { config: TournamentConfigJson } | null)?.config?.teamSize,
+    );
+    const { count } = await supabase
+      .from("registrants")
+      .select("id", { count: "exact", head: true })
+      .eq("tournament_id", input.tournamentId)
+      .eq("proposed_team", teamName)
+      .neq("status", "declined");
+    const problem = capacityError(count ?? 0, clean.length, size, teamName);
+    if (problem) throw new Error(problem);
+  }
+
   const rows = clean.map((m, i) => ({
     tournament_id: input.tournamentId,
     name: m.name,
@@ -762,7 +796,9 @@ export async function setTeamMode(
   const { supabase, tournament } = await loadOwned(tournamentId);
   const config: TournamentConfigJson = { ...(tournament.config ?? {}) };
   if (patch.entryMode !== undefined) config.entryMode = patch.entryMode;
-  if (patch.teamSize !== undefined) config.teamSize = patch.teamSize;
+  if (patch.teamSize !== undefined) {
+    config.teamSize = normalizeTeamSize(patch.teamSize);
+  }
   if (patch.signupEnabled !== undefined) config.signupEnabled = patch.signupEnabled;
   if (patch.googleFormUrl !== undefined) {
     config.googleFormUrl = patch.googleFormUrl.trim() || undefined;
@@ -775,6 +811,136 @@ export async function setTeamMode(
     .update({ config })
     .eq("id", tournament.id);
   if (error) throw error;
+  reval(tournament);
+}
+
+/** Flatten a tournament row + config into the shape settings diffing expects. */
+function settingsSnapshot(t: TournamentRow): SettingsSnapshot {
+  const c = t.config ?? {};
+  return {
+    name: t.name,
+    gameName: t.game_name,
+    eventDate: t.event_date,
+    format: t.format,
+    scoringMode: t.scoring_mode,
+    seedingMethod: t.seeding_method,
+    tiebreak: t.tiebreak,
+    aiTone: t.ai_tone,
+    seedingRounds: c.seedingRounds,
+    roundRobinDouble: c.roundRobinDouble,
+    numGroups: c.numGroups,
+    advancePerGroup: c.advancePerGroup,
+    groupDoubleRoundRobin: c.groupDoubleRoundRobin,
+    knockoutFormat: c.knockoutFormat,
+    numStations: c.numStations,
+    seriesLength: c.seriesLength,
+    selfServiceScoring: c.selfServiceScoring,
+    notes: c.notes,
+  };
+}
+
+/**
+ * Change tournament settings after the event has started, so an organizer can
+ * open sign-ups first and pick the format once the head count is known.
+ *
+ * Structural changes (format, seeding, groups, the draw) regenerate the
+ * schedule. When scores already exist, the caller must pass `clearResults` to
+ * confirm — otherwise the change is rejected rather than silently orphaning them.
+ */
+export async function updateTournamentSettings(
+  tournamentId: string,
+  patch: SettingsPatch & { clearResults?: boolean },
+) {
+  const { supabase, tournament } = await loadOwned(tournamentId);
+  const clean = sanitizeSettingsPatch(patch);
+  const structural = structuralChanges(settingsSnapshot(tournament), clean);
+
+  let resultCount = 0;
+  if (structural.length) {
+    const { count } = await supabase
+      .from("match_results")
+      .select("id", { count: "exact", head: true })
+      .eq("tournament_id", tournament.id);
+    resultCount = count ?? 0;
+    if (resultCount > 0 && !patch.clearResults) {
+      throw new Error(rebuildBlockedMessage(structural, resultCount));
+    }
+  }
+
+  const upd: Record<string, unknown> = {};
+  if (clean.name !== undefined) {
+    const name = clean.name.trim();
+    if (!name) throw new Error("Tournament name is required");
+    upd.name = name;
+  }
+  if (clean.gameName !== undefined) {
+    upd.game_name = clean.gameName?.trim() || null;
+  }
+  if (clean.eventDate !== undefined) upd.event_date = clean.eventDate || null;
+  if (clean.format !== undefined) upd.format = clean.format;
+  if (clean.scoringMode !== undefined) upd.scoring_mode = clean.scoringMode;
+  if (clean.seedingMethod !== undefined) {
+    upd.seeding_method = clean.seedingMethod;
+  }
+  if (clean.tiebreak !== undefined) upd.tiebreak = clean.tiebreak;
+  if (clean.aiTone !== undefined) upd.ai_tone = clean.aiTone;
+  if (patch.reshuffleDraw) upd.draw_seed = newSeed();
+
+  const config: TournamentConfigJson = { ...(tournament.config ?? {}) };
+  if (clean.seedingRounds !== undefined) config.seedingRounds = clean.seedingRounds;
+  if (clean.roundRobinDouble !== undefined) {
+    config.roundRobinDouble = clean.roundRobinDouble;
+  }
+  if (clean.numGroups !== undefined) config.numGroups = clean.numGroups;
+  if (clean.advancePerGroup !== undefined) {
+    config.advancePerGroup = clean.advancePerGroup;
+  }
+  if (clean.groupDoubleRoundRobin !== undefined) {
+    config.groupDoubleRoundRobin = clean.groupDoubleRoundRobin;
+  }
+  if (clean.knockoutFormat !== undefined) {
+    config.knockoutFormat = clean.knockoutFormat;
+  }
+  if (clean.numStations !== undefined) config.numStations = clean.numStations;
+  if (clean.seriesLength !== undefined) config.seriesLength = clean.seriesLength;
+  if (clean.selfServiceScoring !== undefined) {
+    config.selfServiceScoring = clean.selfServiceScoring;
+  }
+  if (clean.notes !== undefined) config.notes = clean.notes.trim() || undefined;
+
+  // Manual draws are expressed as player ids against the old shape — drop them
+  // when the shape they were built for no longer applies.
+  if (clean.numGroups !== undefined && clean.numGroups !== tournament.config?.numGroups) {
+    delete config.manualGroups;
+  }
+  if (clean.seedingMethod !== undefined && clean.seedingMethod !== "manual") {
+    delete config.manualSeedOrder;
+  }
+  upd.config = config;
+
+  if (structural.length) {
+    // Match keys are about to change; drop everything that keys off them.
+    await Promise.all([
+      supabase.from("match_results").delete().eq("tournament_id", tournament.id),
+      supabase
+        .from("station_assignments")
+        .delete()
+        .eq("tournament_id", tournament.id),
+      supabase.from("pending_results").delete().eq("tournament_id", tournament.id),
+    ]);
+  }
+
+  const { error } = await supabase
+    .from("tournaments")
+    .update(upd)
+    .eq("id", tournament.id);
+  if (error) throw error;
+
+  // Recompute against the NEW settings so rankings and status reflect them.
+  await recomputeAndPersist(supabase, {
+    ...tournament,
+    ...(upd as Partial<TournamentRow>),
+  } as TournamentRow);
   reval(tournament);
 }
 
@@ -864,6 +1030,34 @@ export async function deleteTeam(teamId: string) {
   reval(tournament);
 }
 
+/**
+ * Reject an organizer-side roster add that would push a team past its max.
+ * Sizes resolve per-team override → tournament config → built-in default.
+ */
+async function assertTeamHasRoom(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  tournament: TournamentRow,
+  teamId: string,
+  adding: number,
+) {
+  const { data: team } = await supabase
+    .from("teams")
+    .select("*")
+    .eq("id", teamId)
+    .eq("tournament_id", tournament.id)
+    .single();
+  if (!team) throw new Error("Team not found");
+  const t = team as TeamRow;
+  if (t.locked) throw new Error("That team's roster is locked");
+  const { count } = await supabase
+    .from("registrants")
+    .select("id", { count: "exact", head: true })
+    .eq("team_id", teamId);
+  const size = resolveTeamSize(t, tournament.config?.teamSize);
+  const problem = capacityError(count ?? 0, adding, size, t.name);
+  if (problem) throw new Error(problem);
+}
+
 export async function addRegistrant(
   tournamentId: string,
   input: {
@@ -879,6 +1073,9 @@ export async function addRegistrant(
   const { supabase, tournament } = await loadOwned(tournamentId);
   const name = input.name?.trim();
   if (!name) throw new Error("Name is required");
+  if (input.teamId) {
+    await assertTeamHasRoom(supabase, tournament, input.teamId, 1);
+  }
   const { error } = await supabase.from("registrants").insert({
     tournament_id: tournament.id,
     team_id: input.teamId ?? null,
@@ -901,23 +1098,7 @@ export async function assignRegistrantToTeam(
 ) {
   const { supabase, tournament } = await loadOwnedRegistrant(registrantId);
   if (teamId) {
-    const { data: team } = await supabase
-      .from("teams")
-      .select("*")
-      .eq("id", teamId)
-      .eq("tournament_id", tournament.id)
-      .single();
-    if (!team) throw new Error("Team not found");
-    const t = team as TeamRow;
-    if (t.locked) throw new Error("That team's roster is locked");
-    const { count } = await supabase
-      .from("registrants")
-      .select("id", { count: "exact", head: true })
-      .eq("team_id", teamId);
-    const size = resolveTeamSize(t, tournament.config?.teamSize);
-    if ((count ?? 0) >= size.max) {
-      throw new Error(`That team is already at its max of ${size.max}`);
-    }
+    await assertTeamHasRoom(supabase, tournament, teamId, 1);
   }
   await supabase
     .from("registrants")

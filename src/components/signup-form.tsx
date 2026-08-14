@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { submitSignup } from "@/lib/actions/tournaments";
+import { DEFAULT_TEAM_SIZE, type TeamSizeConfig } from "@/lib/teams/sizes";
 
 interface Member {
   name: string;
@@ -26,8 +27,9 @@ export function SignupForm({
   teamSize,
 }: {
   tournamentId: string;
-  teamSize: { target: number; min: number; max: number } | null;
+  teamSize: TeamSizeConfig | null;
 }) {
+  const size = teamSize ?? DEFAULT_TEAM_SIZE;
   const [mode, setMode] = useState<"team" | "solo">("team");
   const [teamName, setTeamName] = useState("");
   const [members, setMembers] = useState<Member[]>([empty()]);
@@ -88,6 +90,7 @@ export function SignupForm({
     );
   }
 
+  const rosterFull = members.length >= size.max;
   const canSubmit =
     mode === "team"
       ? teamName.trim() && members.some((m) => m.name.trim())
@@ -166,21 +169,26 @@ export function SignupForm({
                 ) : null}
               </div>
             ))}
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => setMembers((prev) => [...prev, empty()])}
-            >
-              <Plus className="h-4 w-4" /> Add teammate
-            </Button>
+            <div className="flex items-center justify-between gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={rosterFull}
+                onClick={() => setMembers((prev) => [...prev, empty()])}
+              >
+                <Plus className="h-4 w-4" /> Add teammate
+              </Button>
+              <span className="text-xs font-semibold text-muted-foreground">
+                {members.length} of {size.max} players
+              </span>
+            </div>
           </div>
-          {teamSize ? (
-            <p className="text-xs text-muted-foreground">
-              Teams are usually {teamSize.min}–{teamSize.max} players (target{" "}
-              {teamSize.target}). You can adjust with the organizer at check-in.
-            </p>
-          ) : null}
+          <p className="text-xs text-muted-foreground">
+            {rosterFull
+              ? `This event caps teams at ${size.max} players, so that's a full roster.`
+              : `Teams can have up to ${size.max} players (${size.min} minimum, target ${size.target}).`}
+          </p>
         </div>
       ) : (
         <div className="space-y-3 rounded-xl border border-border p-4">

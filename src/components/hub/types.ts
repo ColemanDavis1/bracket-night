@@ -1,4 +1,11 @@
-import type { AiTone, EngineState, MainFormat, PointsTiebreak, ScoringMode } from "@/lib/engine";
+import type {
+  AiTone,
+  EngineState,
+  MainFormat,
+  PointsTiebreak,
+  ScoringMode,
+  SeedingMethod,
+} from "@/lib/engine";
 
 export interface HubTournament {
   id: string;
@@ -12,6 +19,14 @@ export interface HubTournament {
   status: "setup" | "live" | "complete";
   eventDate: string | null;
   notes: string | null;
+  // --- Format options (editable after the event starts) ---
+  seedingMethod: SeedingMethod;
+  seedingRounds: number | "full" | null;
+  roundRobinDouble: boolean;
+  numGroups: number | null;
+  advancePerGroup: number | null;
+  groupDoubleRoundRobin: boolean;
+  knockoutFormat: "single_elim" | "double_elim" | "triple_elim" | null;
   /** Parallel stations (Feature 12). Defaults to 1. */
   numStations: number;
   /** Best-of-N series length (Feature 13). Defaults to 1. */

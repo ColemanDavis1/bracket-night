@@ -26,6 +26,7 @@ import { LiveIndicator } from "./live-indicator";
 import { PendingApprovals } from "./pending-approvals";
 import { TeamsAdmin } from "./teams-admin";
 import { StationsAdmin } from "./stations-admin";
+import { SettingsAdmin } from "./settings-admin";
 import { canAddEntrant, TEAMS_LOCKED_MESSAGE } from "@/lib/teams/gate";
 
 export function Hub({ data }: { data: HubData }) {
@@ -40,6 +41,9 @@ export function Hub({ data }: { data: HubData }) {
   ).length;
   const names = nameMapOf(players);
   const ranking = state.overallStandings.map((r) => r.participantId);
+  const playedCount = state.matches.filter(
+    (m) => m.status === "done" && !m.voided,
+  ).length;
 
   const showBracket =
     tournament.format !== "round_robin" ||
@@ -149,6 +153,9 @@ export function Hub({ data }: { data: HubData }) {
                 ) : null}
               </TabsTrigger>
             ) : null}
+            {isOrganizer ? (
+              <TabsTrigger value="settings">Settings</TabsTrigger>
+            ) : null}
           </TabsList>
 
           <TabsContent value="scoreboard">
@@ -255,6 +262,16 @@ export function Hub({ data }: { data: HubData }) {
                 state={state}
                 names={names}
                 scoringMode={tournament.scoringMode}
+              />
+            </TabsContent>
+          ) : null}
+
+          {isOrganizer ? (
+            <TabsContent value="settings">
+              <SettingsAdmin
+                tournament={tournament}
+                playedCount={playedCount}
+                entrantCount={teamMode ? data.teams.length : players.length}
               />
             </TabsContent>
           ) : null}

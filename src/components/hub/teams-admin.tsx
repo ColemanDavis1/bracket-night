@@ -6,13 +6,16 @@ import {
   Check,
   CheckCircle2,
   Copy,
+  FileSpreadsheet,
   Lock,
   LockOpen,
   Plus,
   Trash2,
   Trophy,
+  Undo2,
   Upload,
   UserCheck,
+  UserMinus,
   Users,
   Wand2,
   X,
@@ -29,7 +32,16 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { QrCode } from "@/components/qr-code";
-import { resolveTeamSize, fillStatus } from "@/lib/teams/sizes";
+import {
+  DEFAULT_TEAM_SIZE,
+  resolveTeamSize,
+  fillStatus,
+} from "@/lib/teams/sizes";
+import {
+  buildGoogleFormScript,
+  teammateQuestionCount,
+  type FormSpec,
+} from "@/lib/teams/google-form-script";
 import {
   parseRegistrants,
   previewRegistrantImport,
@@ -42,15 +54,24 @@ import {
   checkInWholeTeam,
   createTeam,
   declineRegistrant,
+  deleteRegistrants,
   deleteTeam,
   finalizeTeam,
   importRegistrantsCsv,
   markUncheckedAsNoShow,
+  moveRegistrants,
   setRegistrantCheckedIn,
   setTeamCheckedIn,
   setTeamMode,
+  unfinalizeTeam,
   updateTeam,
 } from "@/lib/actions/tournaments";
+import { unfinalizeBlockedMessage } from "@/lib/bracket-reset";
+import {
+  SIGNUP_MODE_BLURBS,
+  SIGNUP_MODE_LABELS,
+  type SignupMode,
+} from "@/lib/teams/signup-mode";
 import type { HubRegistrant, HubTeam } from "./types";
 
 const SOURCE_LABELS: Record<HubRegistrant["source"], string> = {
@@ -63,27 +84,41 @@ const SOURCE_LABELS: Record<HubRegistrant["source"], string> = {
 export function TeamsAdmin({
   tournamentId,
   slug,
+  eventName,
+  gameName,
+  eventDate,
   teams,
   registrants,
   teamSize,
   signupEnabled,
+  signupMode,
   googleFormUrl,
   canAdd,
   lockReason,
+  playedCount,
 }: {
   tournamentId: string;
   slug: string;
+  eventName: string;
+  gameName: string | null;
+  eventDate: string | null;
   teams: HubTeam[];
   registrants: HubRegistrant[];
   teamSize: { target: number; min: number; max: number } | null;
   signupEnabled: boolean;
+  signupMode: SignupMode;
   googleFormUrl: string | null;
   canAdd: boolean;
   lockReason: string;
+  /** Recorded scores — a team leaving the draw would orphan them. */
+  playedCount: number;
 }) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [onlyNotArrived, setOnlyNotArrived] = useState(false);
+  // Selection spans every list, so people can be gathered from several teams
+  // and moved in one go.
+  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
 
   const approved = registrants.filter((r) => r.status === "approved");
   const pendingRegs = registrants.filter((r) => r.status === "pending");
@@ -112,6 +147,50 @@ export function TeamsAdmin({
     });
   }
 
+  function toggleSelect(id: string, on: boolean) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (on) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }
+
+  function selectAll(ids: string[], on: boolean) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const id of ids) {
+        if (on) next.add(id);
+        else next.delete(id);
+      }
+      return next;
+    });
+  }
+
+  /** Bulk actions clear the selection so the bar doesn't linger over stale ids. */
+  function runOnSelection(fn: (ids: string[]) => Promise<void>) {
+    const ids = [...selected];
+    run(async () => {
+      await fn(ids);
+      setSelected(new Set());
+    });
+  }
+
+  function removePeople(people: HubRegistrant[]) {
+    const what =
+      people.length === 1
+        ? `Remove ${people[0]!.name} from this event?`
+        : `Remove ${people.length} people from this event?`;
+    if (!confirm(`${what} This deletes the person, not the team.`)) return;
+    run(async () => {
+      await deleteRegistrants(
+        tournamentId,
+        people.map((p) => p.id),
+      );
+      setSelected(new Set());
+    });
+  }
+
   return (
     <div className="space-y-8">
       {error ? (
@@ -130,9 +209,13 @@ export function TeamsAdmin({
         slug={slug}
         tournamentId={tournamentId}
         signupEnabled={signupEnabled}
+        signupMode={signupMode}
         googleFormUrl={googleFormUrl}
         onToggleSignups={(v) =>
           run(() => setTeamMode(tournamentId, { signupEnabled: v }))
+        }
+        onChangeMode={(m) =>
+          run(() => setTeamMode(tournamentId, { signupMode: m }))
         }
         disabled={pending}
       />
@@ -180,6 +263,7 @@ export function TeamsAdmin({
           disabled={pending}
           onApprove={(id) => run(() => approveRegistrant(id))}
           onDecline={(id) => run(() => declineRegistrant(id))}
+          onDelete={(r) => removePeople([r])}
         />
       ) : null}
 
@@ -205,6 +289,55 @@ export function TeamsAdmin({
           </div>
         </div>
 
+        {selected.size > 0 ? (
+          <div className="sticky bottom-3 z-10 mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-primary/50 bg-card p-3 shadow-lg">
+            <span className="text-sm font-semibold">
+              {selected.size} selected
+            </span>
+            <Select
+              disabled={pending}
+              onValueChange={(v) =>
+                runOnSelection((ids) =>
+                  moveRegistrants(
+                    tournamentId,
+                    ids,
+                    v === "__solo__" ? null : v,
+                  ),
+                )
+              }
+            >
+              <SelectTrigger className="h-8 w-44 text-xs">
+                <SelectValue placeholder="Move to…" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__solo__">Solo pool</SelectItem>
+                {teams.map((t) => (
+                  <SelectItem key={t.id} value={t.id}>
+                    {t.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={pending}
+              onClick={() =>
+                removePeople(approved.filter((r) => selected.has(r.id)))
+              }
+            >
+              <Trash2 className="h-4 w-4" /> Remove from event
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setSelected(new Set())}
+            >
+              Clear
+            </Button>
+          </div>
+        ) : null}
+
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {/* Unassigned solo pool */}
           <div className="rounded-lg border border-dashed border-border p-3">
@@ -217,12 +350,16 @@ export function TeamsAdmin({
               teams={teams}
               currentTeamId={null}
               disabled={pending}
+              selected={selected}
+              onToggleSelect={toggleSelect}
+              onSelectAll={selectAll}
               onAssign={(rid, teamId) =>
                 run(() => assignRegistrantToTeam(rid, teamId))
               }
               onToggleArrived={(rid, v) =>
                 run(() => setRegistrantCheckedIn(rid, v))
               }
+              onDelete={(r) => removePeople([r])}
             />
           </div>
 
@@ -235,8 +372,13 @@ export function TeamsAdmin({
               teams={teams}
               teamSize={teamSize}
               canAdd={canAdd}
+              playedCount={playedCount}
               onlyNotArrived={onlyNotArrived}
               disabled={pending}
+              selected={selected}
+              onToggleSelect={toggleSelect}
+              onSelectAll={selectAll}
+              onDeletePeople={removePeople}
               run={run}
             />
           ))}
@@ -256,6 +398,19 @@ export function TeamsAdmin({
           onImport={(rows) => run(() => importRegistrantsCsv(tournamentId, rows))}
         />
       </div>
+
+      <GoogleFormBuilder
+        spec={{
+          eventName,
+          gameName,
+          eventDate,
+          signupMode,
+          teamMax: teamSize?.max ?? DEFAULT_TEAM_SIZE.max,
+        }}
+        savedUrl={googleFormUrl}
+        disabled={pending}
+        onSaveUrl={(url) => run(() => setTeamMode(tournamentId, { googleFormUrl: url }))}
+      />
     </div>
   );
 }
@@ -265,15 +420,19 @@ export function TeamsAdmin({
 function ShareRow({
   slug,
   signupEnabled,
+  signupMode,
   googleFormUrl,
   onToggleSignups,
+  onChangeMode,
   disabled,
 }: {
   slug: string;
   tournamentId: string;
   signupEnabled: boolean;
+  signupMode: SignupMode;
   googleFormUrl: string | null;
   onToggleSignups: (v: boolean) => void;
+  onChangeMode: (mode: SignupMode) => void;
   disabled: boolean;
 }) {
   const [origin, setOrigin] = useState("");
@@ -301,6 +460,29 @@ function ShareRow({
               </>
             )}
           </Button>
+        </div>
+        <div>
+          <Label className="mb-1.5 block text-xs">Who can sign up</Label>
+          <Select
+            value={signupMode}
+            disabled={disabled}
+            onValueChange={(v) => onChangeMode(v as SignupMode)}
+          >
+            <SelectTrigger className="h-8 w-56 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {(Object.keys(SIGNUP_MODE_LABELS) as SignupMode[]).map((m) => (
+                <SelectItem key={m} value={m}>
+                  {SIGNUP_MODE_LABELS[m]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="mt-1 max-w-xs text-xs text-muted-foreground">
+            {SIGNUP_MODE_BLURBS[signupMode]} Applies to the sign-up link and QR
+            code; your Google Form and walk-in adds are unaffected.
+          </p>
         </div>
         <div className="flex flex-wrap gap-2">
           <CopyButton label="Copy sign-up link" value={signupUrl} />
@@ -343,11 +525,13 @@ function ApprovalQueue({
   disabled,
   onApprove,
   onDecline,
+  onDelete,
 }: {
   pending: HubRegistrant[];
   disabled: boolean;
   onApprove: (id: string) => void;
   onDecline: (id: string) => void;
+  onDelete: (registrant: HubRegistrant) => void;
 }) {
   return (
     <section>
@@ -389,6 +573,16 @@ function ApprovalQueue({
               >
                 <X className="h-4 w-4" /> Decline
               </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                aria-label={`Delete ${r.name}`}
+                title="Delete the sign-up entirely"
+                disabled={disabled}
+                onClick={() => onDelete(r)}
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
             </div>
           </li>
         ))}
@@ -404,8 +598,13 @@ function TeamCard({
   teams,
   teamSize,
   canAdd,
+  playedCount,
   onlyNotArrived,
   disabled,
+  selected,
+  onToggleSelect,
+  onSelectAll,
+  onDeletePeople,
   run,
 }: {
   team: HubTeam;
@@ -414,8 +613,13 @@ function TeamCard({
   teams: HubTeam[];
   teamSize: { target: number; min: number; max: number } | null;
   canAdd: boolean;
+  playedCount: number;
   onlyNotArrived: boolean;
   disabled: boolean;
+  selected: ReadonlySet<string>;
+  onToggleSelect: (registrantId: string, on: boolean) => void;
+  onSelectAll: (registrantIds: string[], on: boolean) => void;
+  onDeletePeople: (people: HubRegistrant[]) => void;
   run: (fn: () => Promise<void>) => void;
 }) {
   const [renaming, setRenaming] = useState(false);
@@ -495,8 +699,12 @@ function TeamCard({
         teams={teams}
         currentTeamId={team.id}
         disabled={disabled}
+        selected={selected}
+        onToggleSelect={onToggleSelect}
+        onSelectAll={onSelectAll}
         onAssign={(rid, teamId) => run(() => assignRegistrantToTeam(rid, teamId))}
         onToggleArrived={(rid, v) => run(() => setRegistrantCheckedIn(rid, v))}
+        onDelete={(r) => onDeletePeople([r])}
       />
 
       <div className="mt-3 flex flex-wrap gap-1.5">
@@ -540,7 +748,26 @@ function TeamCard({
           >
             <CheckCircle2 className="h-4 w-4" /> Finalize
           </Button>
-        ) : null}
+        ) : (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={disabled}
+            onClick={() => {
+              // Scores already recorded would re-attach to a different pairing
+              // after the re-draw, so clearing them is the price of the undo.
+              if (
+                playedCount > 0 &&
+                !confirm(unfinalizeBlockedMessage(team.name, playedCount))
+              ) {
+                return;
+              }
+              run(() => unfinalizeTeam(team.id, { clearResults: true }));
+            }}
+          >
+            <Undo2 className="h-4 w-4" /> Undo finalize
+          </Button>
+        )}
         <Button
           size="sm"
           variant="ghost"
@@ -576,23 +803,53 @@ function MemberList({
   teams,
   currentTeamId,
   disabled,
+  selected,
+  onToggleSelect,
+  onSelectAll,
   onAssign,
   onToggleArrived,
+  onDelete,
 }: {
   members: HubRegistrant[];
   teams: HubTeam[];
   currentTeamId: string | null;
   disabled: boolean;
+  selected: ReadonlySet<string>;
+  onToggleSelect: (registrantId: string, on: boolean) => void;
+  onSelectAll: (registrantIds: string[], on: boolean) => void;
   onAssign: (registrantId: string, teamId: string | null) => void;
   onToggleArrived: (registrantId: string, checkedIn: boolean) => void;
+  onDelete: (registrant: HubRegistrant) => void;
 }) {
   if (members.length === 0) {
     return <p className="py-2 text-xs text-muted-foreground">No members.</p>;
   }
+  const ids = members.map((m) => m.id);
+  const allSelected = ids.every((id) => selected.has(id));
+
   return (
     <ul className="mt-2 space-y-1.5">
+      {members.length > 1 ? (
+        <li className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <input
+            type="checkbox"
+            aria-label={allSelected ? "Deselect all" : "Select all"}
+            checked={allSelected}
+            disabled={disabled}
+            onChange={(e) => onSelectAll(ids, e.target.checked)}
+          />
+          {allSelected ? "Deselect all" : "Select all"}
+        </li>
+      ) : null}
       {members.map((m) => (
         <li key={m.id} className="flex items-center gap-1.5 text-sm">
+          <input
+            type="checkbox"
+            aria-label={`Select ${m.name}`}
+            checked={selected.has(m.id)}
+            disabled={disabled}
+            onChange={(e) => onToggleSelect(m.id, e.target.checked)}
+          />
           <button
             type="button"
             aria-label={m.checkedIn ? "Checked in" : "Not arrived"}
@@ -608,6 +865,18 @@ function MemberList({
               <span className="ml-1 text-xs text-muted-foreground">(C)</span>
             ) : null}
           </span>
+          {currentTeamId ? (
+            <button
+              type="button"
+              aria-label={`Move ${m.name} to the solo pool`}
+              title="Move to solo pool"
+              className="text-muted-foreground hover:text-foreground"
+              disabled={disabled}
+              onClick={() => onAssign(m.id, null)}
+            >
+              <UserMinus className="h-4 w-4" />
+            </button>
+          ) : null}
           <Select
             value={currentTeamId ?? "__solo__"}
             disabled={disabled}
@@ -627,6 +896,16 @@ function MemberList({
               ))}
             </SelectContent>
           </Select>
+          <button
+            type="button"
+            aria-label={`Remove ${m.name} from the event`}
+            title="Remove from event"
+            className="text-muted-foreground hover:text-destructive"
+            disabled={disabled}
+            onClick={() => onDelete(m)}
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
         </li>
       ))}
     </ul>
@@ -727,6 +1006,123 @@ function AddWalkin({
           <Plus className="h-4 w-4" /> Add
         </Button>
       </div>
+    </section>
+  );
+}
+
+/**
+ * Build a Google Form for this event without asking the organizer to wire up
+ * OAuth: we emit an Apps Script they run in their own account, so the form is
+ * created in their Drive and owned by them. Questions are worded to match the
+ * CSV importer, so the round trip needs no manual column mapping.
+ */
+function GoogleFormBuilder({
+  spec,
+  savedUrl,
+  disabled,
+  onSaveUrl,
+}: {
+  spec: Omit<FormSpec, "collectPhone">;
+  savedUrl: string | null;
+  disabled: boolean;
+  onSaveUrl: (url: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [collectPhone, setCollectPhone] = useState(false);
+  const [url, setUrl] = useState(savedUrl ?? "");
+
+  const script = useMemo(
+    () => buildGoogleFormScript({ ...spec, collectPhone }),
+    [spec, collectPhone],
+  );
+  const teammates = teammateQuestionCount(spec.teamMax);
+
+  return (
+    <section className="rounded-lg border border-border p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <Label>Google Form</Label>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Generate a form matched to this event — {SIGNUP_MODE_LABELS[
+              spec.signupMode
+            ].toLowerCase()}
+            {teammates > 0
+              ? `, ${teammates} teammate question${teammates === 1 ? "" : "s"}`
+              : ""}
+            . Created in your own Google Drive.
+          </p>
+        </div>
+        <Button
+          size="sm"
+          variant={open ? "ghost" : "outline"}
+          onClick={() => setOpen((v) => !v)}
+        >
+          <FileSpreadsheet className="h-4 w-4" />
+          {open ? "Hide" : "Generate a Google Form"}
+        </Button>
+      </div>
+
+      {open ? (
+        <div className="mt-4 space-y-3">
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={collectPhone}
+              onChange={(e) => setCollectPhone(e.target.checked)}
+            />
+            Also ask for a phone number
+          </label>
+
+          <ol className="list-decimal space-y-1 pl-5 text-xs text-muted-foreground">
+            <li>
+              Copy the script below and open{" "}
+              <a
+                href="https://script.google.com/home/projects/create"
+                target="_blank"
+                rel="noreferrer"
+                className="font-medium text-primary hover:underline"
+              >
+                script.google.com
+              </a>
+              .
+            </li>
+            <li>Replace everything in the editor with it, then press Run.</li>
+            <li>
+              Approve the permission prompt — it only creates a new form.
+            </li>
+            <li>Open View &gt; Logs, copy the form link, and paste it below.</li>
+          </ol>
+
+          <textarea
+            readOnly
+            value={script}
+            rows={12}
+            onFocus={(e) => e.currentTarget.select()}
+            className="w-full rounded-md border border-border bg-muted/40 px-3 py-2 font-mono text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          />
+          <CopyButton label="Copy the script" value={script} />
+
+          <div className="flex flex-wrap items-end gap-2">
+            <div className="flex-1">
+              <Label className="mb-1.5 block text-xs">
+                Form link (saved with the event)
+              </Label>
+              <Input
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                placeholder="https://docs.google.com/forms/…"
+              />
+            </div>
+            <Button
+              size="sm"
+              disabled={disabled || url.trim() === (savedUrl ?? "")}
+              onClick={() => onSaveUrl(url.trim())}
+            >
+              Save link
+            </Button>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }

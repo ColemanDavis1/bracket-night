@@ -6,6 +6,7 @@ import type {
   ScoringMode,
   SeedingMethod,
 } from "@/lib/engine";
+import type { SignupMode } from "@/lib/teams/signup-mode";
 
 export interface HubTournament {
   id: string;
@@ -40,6 +41,8 @@ export interface HubTournament {
   teamSize: { target: number; min: number; max: number } | null;
   /** Public native sign-up page enabled. */
   signupEnabled: boolean;
+  /** Which sign-up paths the public page offers. */
+  signupMode: SignupMode;
   /** Organizer's Google Form link, if any. */
   googleFormUrl: string | null;
   /** Human names for the stations/courts. */

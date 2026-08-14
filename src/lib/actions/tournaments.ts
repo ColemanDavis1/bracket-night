@@ -31,12 +31,22 @@ import {
   resolveTeamSize,
 } from "@/lib/teams/sizes";
 import {
+  allowsSignupType,
+  normalizeSignupMode,
+  signupTypeBlockedMessage,
+  type SignupMode,
+} from "@/lib/teams/signup-mode";
+import {
   rebuildBlockedMessage,
   sanitizeSettingsPatch,
   structuralChanges,
   type SettingsPatch,
   type SettingsSnapshot,
 } from "@/lib/tournament-settings";
+import {
+  resetBracketMessage,
+  unfinalizeBlockedMessage,
+} from "@/lib/bracket-reset";
 import {
   autoAssignStations as computeAutoAssign,
   type StationAssignmentLike,
@@ -562,18 +572,27 @@ export async function submitSignup(input: SignupInput) {
     throw new Error("Team name is required");
   }
 
+  const { data: config } = await supabase
+    .from("tournaments")
+    .select("config")
+    .eq("id", input.tournamentId)
+    .single();
+  const cfg = (config as { config: TournamentConfigJson } | null)?.config;
+
+  // Which paths this event accepts. RLS enforces the same rule; this is the
+  // friendly error for someone whose form went stale mid-fill.
+  const signupMode = normalizeSignupMode(cfg?.signupMode);
+  if (!allowsSignupType(signupMode, input.mode)) {
+    throw new Error(signupTypeBlockedMessage(signupMode));
+  }
+
   // Enforce the roster cap here too: the form caps its own inputs, but a team
   // can also sign up across several submissions under the same name.
   if (input.mode === "team") {
     const teamName = input.teamName!.trim();
-    const { data: t } = await supabase
-      .from("tournaments")
-      .select("config")
-      .eq("id", input.tournamentId)
-      .single();
     const size = resolveTeamSize(
       { target_size: null, min_size: null, max_size: null },
-      (t as { config: TournamentConfigJson } | null)?.config?.teamSize,
+      cfg?.teamSize,
     );
     const { count } = await supabase
       .from("registrants")
@@ -777,6 +796,34 @@ async function freeStation(
     .eq("match_key", matchKey);
 }
 
+/**
+ * Drop everything that keys off a match key. Call before any change that
+ * regenerates the schedule (structural settings, a re-draw, an entrant leaving
+ * the pool) so old scores can't re-attach to a different pairing.
+ */
+async function clearMatchKeyedData(
+  supabase: SupabaseClient,
+  tournamentId: string,
+) {
+  await Promise.all([
+    supabase.from("match_results").delete().eq("tournament_id", tournamentId),
+    supabase
+      .from("station_assignments")
+      .delete()
+      .eq("tournament_id", tournamentId),
+    supabase.from("pending_results").delete().eq("tournament_id", tournamentId),
+  ]);
+}
+
+/** How many scores a re-draw would orphan. */
+async function countResults(supabase: SupabaseClient, tournamentId: string) {
+  const { count } = await supabase
+    .from("match_results")
+    .select("id", { count: "exact", head: true })
+    .eq("tournament_id", tournamentId);
+  return count ?? 0;
+}
+
 function reval(tournament: TournamentRow) {
   revalidatePath(`/t/${tournament.slug}/manage`);
   revalidatePath(`/t/${tournament.slug}`);
@@ -789,6 +836,7 @@ export async function setTeamMode(
     entryMode?: "individual" | "team";
     teamSize?: { target: number; min: number; max: number };
     signupEnabled?: boolean;
+    signupMode?: SignupMode;
     googleFormUrl?: string;
     stationLabels?: string[];
   },
@@ -800,6 +848,9 @@ export async function setTeamMode(
     config.teamSize = normalizeTeamSize(patch.teamSize);
   }
   if (patch.signupEnabled !== undefined) config.signupEnabled = patch.signupEnabled;
+  if (patch.signupMode !== undefined) {
+    config.signupMode = normalizeSignupMode(patch.signupMode);
+  }
   if (patch.googleFormUrl !== undefined) {
     config.googleFormUrl = patch.googleFormUrl.trim() || undefined;
   }
@@ -857,11 +908,7 @@ export async function updateTournamentSettings(
 
   let resultCount = 0;
   if (structural.length) {
-    const { count } = await supabase
-      .from("match_results")
-      .select("id", { count: "exact", head: true })
-      .eq("tournament_id", tournament.id);
-    resultCount = count ?? 0;
+    resultCount = await countResults(supabase, tournament.id);
     if (resultCount > 0 && !patch.clearResults) {
       throw new Error(rebuildBlockedMessage(structural, resultCount));
     }
@@ -920,14 +967,7 @@ export async function updateTournamentSettings(
 
   if (structural.length) {
     // Match keys are about to change; drop everything that keys off them.
-    await Promise.all([
-      supabase.from("match_results").delete().eq("tournament_id", tournament.id),
-      supabase
-        .from("station_assignments")
-        .delete()
-        .eq("tournament_id", tournament.id),
-      supabase.from("pending_results").delete().eq("tournament_id", tournament.id),
-    ]);
+    await clearMatchKeyedData(supabase, tournament.id);
   }
 
   const { error } = await supabase
@@ -1104,6 +1144,64 @@ export async function assignRegistrantToTeam(
     .from("registrants")
     .update({ team_id: teamId })
     .eq("id", registrantId);
+  reval(tournament);
+}
+
+/**
+ * Move several people at once — onto a team, or back to the solo pool with a
+ * null teamId. Capacity is checked against only the ones actually arriving, so
+ * re-confirming people already on the team can't trip the cap.
+ */
+export async function moveRegistrants(
+  tournamentId: string,
+  registrantIds: string[],
+  teamId: string | null,
+) {
+  const { supabase, tournament } = await loadOwned(tournamentId);
+  if (!registrantIds.length) return;
+
+  if (teamId) {
+    const { data: rows } = await supabase
+      .from("registrants")
+      .select("id, team_id")
+      .eq("tournament_id", tournament.id)
+      .in("id", registrantIds);
+    const arriving = ((rows ?? []) as { team_id: string | null }[]).filter(
+      (r) => r.team_id !== teamId,
+    ).length;
+    if (arriving) {
+      await assertTeamHasRoom(supabase, tournament, teamId, arriving);
+    }
+  }
+
+  const { error } = await supabase
+    .from("registrants")
+    .update({ team_id: teamId })
+    .eq("tournament_id", tournament.id)
+    .in("id", registrantIds);
+  if (error) throw error;
+  reval(tournament);
+}
+
+/**
+ * Remove people from the event outright — a duplicate sign-up, a no-show who
+ * cancelled, someone entered by mistake. Works for the solo pool and for team
+ * members. Scoped by tournament id so ids from another event can't be touched.
+ *
+ * This deletes the person, not the team. Teams are removed on their own card.
+ */
+export async function deleteRegistrants(
+  tournamentId: string,
+  registrantIds: string[],
+) {
+  const { supabase, tournament } = await loadOwned(tournamentId);
+  if (!registrantIds.length) return;
+  const { error } = await supabase
+    .from("registrants")
+    .delete()
+    .eq("tournament_id", tournament.id)
+    .in("id", registrantIds);
+  if (error) throw error;
   reval(tournament);
 }
 
@@ -1314,6 +1412,105 @@ export async function finalizeTeam(teamId: string) {
     .update({ player_id: (player as PlayerRow).id })
     .eq("id", teamId);
   await recomputeAndPersist(supabase, tournament);
+  reval(tournament);
+}
+
+/**
+ * Undo `finalizeTeam`: pull a team back out of the draw while keeping its
+ * roster, check-ins, and sign-up history. The entrant pool shrinks, so the
+ * schedule regenerates — any score already recorded would land on a different
+ * pairing, so the caller confirms and we clear them.
+ */
+export async function unfinalizeTeam(
+  teamId: string,
+  opts?: { clearResults?: boolean },
+) {
+  const { supabase, tournament, team } = await loadOwnedTeam(teamId);
+  if (!team.player_id) return; // not in the bracket
+
+  const resultCount = await countResults(supabase, tournament.id);
+  if (resultCount > 0 && !opts?.clearResults) {
+    throw new Error(unfinalizeBlockedMessage(team.name, resultCount));
+  }
+  if (resultCount > 0) {
+    await clearMatchKeyedData(supabase, tournament.id);
+  }
+
+  await supabase.from("teams").update({ player_id: null }).eq("id", teamId);
+  await supabase
+    .from("players")
+    .delete()
+    .eq("id", team.player_id)
+    .eq("tournament_id", tournament.id);
+
+  await recomputeAndPersist(supabase, tournament);
+  reval(tournament);
+}
+
+/**
+ * Undo the whole draw. Every finalized team leaves the bracket, scores and
+ * court assignments are cleared, the draw seed is re-rolled, and the event
+ * returns to "setup" so the organizer can change format and re-lock later.
+ *
+ * The people layer (teams, rosters, registrants, check-ins) is untouched — this
+ * undoes the bracket, not the sign-ups. In individual mode there are no team
+ * entrants to release, so it clears results and re-draws.
+ */
+export async function resetBracket(
+  tournamentId: string,
+  opts?: { clearResults?: boolean },
+) {
+  const { supabase, tournament } = await loadOwned(tournamentId);
+
+  const [resultCount, { data: teams }] = await Promise.all([
+    countResults(supabase, tournament.id),
+    supabase
+      .from("teams")
+      .select("*")
+      .eq("tournament_id", tournament.id)
+      .not("player_id", "is", null),
+  ]);
+  const finalized = (teams ?? []) as TeamRow[];
+  if (resultCount > 0 && !opts?.clearResults) {
+    throw new Error(
+      resetBracketMessage({
+        finalizedTeams: finalized.length,
+        results: resultCount,
+      }),
+    );
+  }
+
+  await clearMatchKeyedData(supabase, tournament.id);
+
+  if (finalized.length) {
+    const playerIds = finalized
+      .map((t) => t.player_id)
+      .filter((id): id is string => Boolean(id));
+    await supabase
+      .from("teams")
+      .update({ player_id: null })
+      .in(
+        "id",
+        finalized.map((t) => t.id),
+      );
+    await supabase
+      .from("players")
+      .delete()
+      .eq("tournament_id", tournament.id)
+      .in("id", playerIds);
+  }
+
+  const { error } = await supabase
+    .from("tournaments")
+    .update({
+      draw_seed: newSeed(),
+      status: "setup",
+      power_ranking: [],
+      prev_power_ranking: [],
+    })
+    .eq("id", tournament.id);
+  if (error) throw error;
+
   reval(tournament);
 }
 

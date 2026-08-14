@@ -9,6 +9,7 @@ import type {
 } from "@/lib/engine";
 import { buildEngineState, type TournamentConfig } from "@/lib/engine";
 import type { GroupAssignment, StageConfig } from "@/lib/engine";
+import type { SignupMode } from "@/lib/teams/signup-mode";
 
 /** Extra config persisted in tournaments.config (jsonb). */
 export interface TournamentConfigJson {
@@ -39,6 +40,11 @@ export interface TournamentConfigJson {
   teamSize?: { target: number; min: number; max: number };
   /** Gates the public native sign-up page (also enforced by RLS). */
   signupEnabled?: boolean;
+  /**
+   * Which sign-up paths the public page offers (also enforced by RLS).
+   * Defaults to "both".
+   */
+  signupMode?: SignupMode;
   /** Organizer-owned Google Form link to display/share. */
   googleFormUrl?: string;
   /** Human names for stations/courts, e.g. ["Court 1","Table A"]. */

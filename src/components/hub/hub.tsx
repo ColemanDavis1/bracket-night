@@ -225,13 +225,18 @@ export function Hub({ data }: { data: HubData }) {
               <TeamsAdmin
                 tournamentId={tournament.id}
                 slug={tournament.slug}
+                eventName={tournament.name}
+                gameName={tournament.gameName}
+                eventDate={tournament.eventDate}
                 teams={data.teams}
                 registrants={data.registrants}
                 teamSize={tournament.teamSize}
                 signupEnabled={tournament.signupEnabled}
+                signupMode={tournament.signupMode}
                 googleFormUrl={tournament.googleFormUrl}
                 canAdd={canAddEntrant(state)}
                 lockReason={TEAMS_LOCKED_MESSAGE}
+                playedCount={playedCount}
               />
             </TabsContent>
           ) : null}
@@ -272,6 +277,15 @@ export function Hub({ data }: { data: HubData }) {
                 tournament={tournament}
                 playedCount={playedCount}
                 entrantCount={teamMode ? data.teams.length : players.length}
+                teamsLocked={!canAddEntrant(state)}
+                lockReason={
+                  state.complete
+                    ? "This tournament is complete"
+                    : TEAMS_LOCKED_MESSAGE
+                }
+                finalizedTeams={
+                  data.teams.filter((t) => t.playerId != null).length
+                }
               />
             </TabsContent>
           ) : null}

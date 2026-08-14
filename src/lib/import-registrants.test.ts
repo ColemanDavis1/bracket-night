@@ -38,7 +38,7 @@ describe("detectColumns", () => {
       phone: 3,
       soloOrTeam: 4,
       teamName: 5,
-      teammates: 6,
+      teammates: [6],
     });
   });
 
@@ -46,6 +46,19 @@ describe("detectColumns", () => {
     const map = detectColumns(["Team Name", "Your Name"]);
     expect(map.teamName).toBe(0);
     expect(map.name).toBe(1);
+  });
+
+  it("collects every numbered teammate column in form order", () => {
+    const map = detectColumns([
+      "Your Name",
+      "Team Name",
+      "Teammate 2 Name",
+      "Teammate 3 Name",
+      "Teammate 4 Name",
+    ]);
+    expect(map.name).toBe(0);
+    expect(map.teamName).toBe(1);
+    expect(map.teammates).toEqual([2, 3, 4]);
   });
 });
 
@@ -71,6 +84,16 @@ describe("parseRegistrants", () => {
     expect(squad[0]!.isCaptain).toBe(true);
     expect(squad.slice(1).every((r) => !r.isCaptain)).toBe(true);
     expect(squad.every((r) => r.signupType === "team")).toBe(true);
+  });
+
+  it("expands one-question-per-teammate columns, skipping blanks", () => {
+    const t = [
+      "Your Name,Team Name,Teammate 2 Name,Teammate 3 Name,Teammate 4 Name",
+      "Bob,Bob Squad,Carol,,Dave",
+    ].join("\n");
+    const rows = parseRegistrants(t);
+    expect(rows.map((r) => r.name)).toEqual(["Bob", "Carol", "Dave"]);
+    expect(rows.every((r) => r.teamName === "Bob Squad")).toBe(true);
   });
 
   it("infers team from a team name when there is no solo/team column", () => {

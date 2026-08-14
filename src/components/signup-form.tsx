@@ -8,6 +8,11 @@ import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { submitSignup } from "@/lib/actions/tournaments";
 import { DEFAULT_TEAM_SIZE, type TeamSizeConfig } from "@/lib/teams/sizes";
+import {
+  allowedSignupTypes,
+  signupModeHint,
+  type SignupMode,
+} from "@/lib/teams/signup-mode";
 
 interface Member {
   name: string;
@@ -19,18 +24,22 @@ const empty = (): Member => ({ name: "", email: "", phone: "" });
 
 /**
  * Public sign-up form, designed for someone filling it out on a phone in a
- * hallway. Two paths: register a full team, or join solo to be placed on a team.
- * Submissions land in the organizer's approval queue (pending/native).
+ * hallway. Up to two paths: register a full team, or join solo to be placed on
+ * a team — whichever the organizer allows. Submissions land in the organizer's
+ * approval queue (pending/native).
  */
 export function SignupForm({
   tournamentId,
   teamSize,
+  signupMode,
 }: {
   tournamentId: string;
   teamSize: TeamSizeConfig | null;
+  signupMode: SignupMode;
 }) {
   const size = teamSize ?? DEFAULT_TEAM_SIZE;
-  const [mode, setMode] = useState<"team" | "solo">("team");
+  const paths = allowedSignupTypes(signupMode);
+  const [mode, setMode] = useState<"team" | "solo">(paths[0] ?? "team");
   const [teamName, setTeamName] = useState("");
   const [members, setMembers] = useState<Member[]>([empty()]);
   const [solo, setSolo] = useState<Member>(empty());
@@ -81,7 +90,7 @@ export function SignupForm({
             setTeamName("");
             setMembers([empty()]);
             setSolo(empty());
-            setMode("team");
+            setMode(paths[0] ?? "team");
           }}
         >
           Sign up someone else
@@ -98,20 +107,33 @@ export function SignupForm({
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-2">
-        <ModeButton
-          active={mode === "team"}
-          onClick={() => setMode("team")}
-          icon={<Users className="h-4 w-4" />}
-          label="Register a full team"
-        />
-        <ModeButton
-          active={mode === "solo"}
-          onClick={() => setMode("solo")}
-          icon={<UserPlus className="h-4 w-4" />}
-          label="Join as a solo player"
-        />
-      </div>
+      {paths.length > 1 ? (
+        <div className="grid grid-cols-2 gap-2">
+          <ModeButton
+            active={mode === "team"}
+            onClick={() => setMode("team")}
+            icon={<Users className="h-4 w-4" />}
+            label="Register a full team"
+          />
+          <ModeButton
+            active={mode === "solo"}
+            onClick={() => setMode("solo")}
+            icon={<UserPlus className="h-4 w-4" />}
+            label="Join as a solo player"
+          />
+        </div>
+      ) : (
+        // Only one path is open: state it plainly instead of showing a toggle
+        // with nothing to toggle to.
+        <p className="flex items-start gap-2 rounded-xl border border-border bg-card/60 px-3 py-2 text-sm text-muted-foreground">
+          {mode === "team" ? (
+            <Users className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+          ) : (
+            <UserPlus className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+          )}
+          {signupModeHint(signupMode)}
+        </p>
+      )}
 
       {mode === "team" ? (
         <div className="space-y-4 rounded-xl border border-border p-4">

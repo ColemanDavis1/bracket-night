@@ -1,7 +1,15 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
-import { AlertTriangle, RotateCcw, Save, Shuffle } from "lucide-react";
+import {
+  AlertTriangle,
+  Lock,
+  LockOpen,
+  RotateCcw,
+  Save,
+  Shuffle,
+  Undo2,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -33,8 +41,13 @@ import {
   type SettingsPatch,
   type SettingsSnapshot,
 } from "@/lib/tournament-settings";
+import { resetBracketMessage } from "@/lib/bracket-reset";
 import { DEFAULT_TEAM_SIZE, normalizeTeamSize } from "@/lib/teams/sizes";
-import { setTeamMode, updateTournamentSettings } from "@/lib/actions/tournaments";
+import {
+  resetBracket,
+  setTeamMode,
+  updateTournamentSettings,
+} from "@/lib/actions/tournaments";
 import type { HubTournament } from "./types";
 
 /**
@@ -46,10 +59,18 @@ export function SettingsAdmin({
   tournament,
   playedCount,
   entrantCount,
+  teamsLocked,
+  lockReason,
+  finalizedTeams,
 }: {
   tournament: HubTournament;
   playedCount: number;
   entrantCount: number;
+  /** True once the knockout round has started and the field is fixed. */
+  teamsLocked: boolean;
+  lockReason: string;
+  /** Teams currently holding a bracket slot (0 in individual mode). */
+  finalizedTeams: number;
 }) {
   const current: SettingsSnapshot = useMemo(
     () => ({
@@ -155,6 +176,11 @@ export function SettingsAdmin({
     setSaved(false);
   }
 
+  const resetMessage = resetBracketMessage({
+    finalizedTeams,
+    results: playedCount,
+  });
+
   const formats = (Object.keys(FORMAT_LABELS) as MainFormat[]).filter(
     // The multi-stage pipeline is built in the wizard; don't offer it as a
     // switch target here, but keep it selectable if it's already in use.
@@ -163,6 +189,26 @@ export function SettingsAdmin({
 
   return (
     <div className="space-y-6">
+      {teamsLocked ? (
+        <p className="flex items-start gap-2 rounded-lg border border-broadcast-gold/40 bg-broadcast-gold/10 px-3 py-2 text-sm">
+          <Lock className="mt-0.5 h-4 w-4 shrink-0 text-broadcast-gold" />
+          <span>
+            {lockReason}. Format changes still work, but they rebuild the
+            schedule and clear scores. Use <strong>Reset the draw</strong> below
+            to go back to setup.
+          </span>
+        </p>
+      ) : (
+        <p className="flex items-start gap-2 rounded-lg border border-border bg-card/60 px-3 py-2 text-sm">
+          <LockOpen className="mt-0.5 h-4 w-4 shrink-0 text-broadcast-green" />
+          <span>
+            Setup is still open — everything here is safe to change
+            {playedCount === 0 ? " and nothing has been played yet" : ""}. The
+            field locks once the knockout round starts.
+          </span>
+        </p>
+      )}
+
       <Section
         title="Event details"
         desc="Shown on the public hub and the TV board."
@@ -529,6 +575,36 @@ export function SettingsAdmin({
           <span className="text-sm text-broadcast-green">Settings saved.</span>
         ) : null}
       </div>
+
+      <Section
+        title="Reset the draw"
+        desc="Undo bracket generation and team lock-in. Sign-ups, rosters, and check-ins are kept."
+      >
+        <p className="text-sm text-muted-foreground">
+          {resetMessage}
+        </p>
+        <Button
+          className="mt-3"
+          variant="outline"
+          disabled={pending}
+          onClick={() => {
+            if (confirm(`${resetMessage}\n\nReset the draw?`)) {
+              startTransition(async () => {
+                setError(null);
+                try {
+                  await resetBracket(tournament.id, { clearResults: true });
+                } catch (e) {
+                  setError(
+                    e instanceof Error ? e.message : "Could not reset the draw.",
+                  );
+                }
+              });
+            }
+          }}
+        >
+          <Undo2 className="h-4 w-4" /> Reset the draw
+        </Button>
+      </Section>
     </div>
   );
 }

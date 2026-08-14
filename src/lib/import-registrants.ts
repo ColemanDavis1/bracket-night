@@ -26,7 +26,12 @@ export interface ColumnMapping {
   phone?: number;
   soloOrTeam?: number;
   teamName?: number;
-  teammates?: number;
+  /**
+   * Every teammate column, in form order. A Google Form is usually built as
+   * separate "Teammate 1 / Teammate 2 / …" questions, but one comma-separated
+   * "Teammates" box works too — both collapse into this list.
+   */
+  teammates?: number[];
 }
 
 export interface RegistrantImportPreview {
@@ -99,15 +104,16 @@ export function detectColumns(header: readonly string[]): ColumnMapping {
   const mapping: ColumnMapping = {};
 
   h.forEach((col, i) => {
-    if (mapping.teamName === undefined && has(col, "team") && has(col, "name")) {
-      mapping.teamName = i;
-      return;
-    }
+    // Teammate columns are checked first: "Teammate 1 Name" contains both
+    // "team" and "name" and must not be mistaken for the team-name column.
     if (
-      mapping.teammates === undefined &&
       has(col, "teammate", "team member", "roster", "other players", "members")
     ) {
-      mapping.teammates = i;
+      mapping.teammates = [...(mapping.teammates ?? []), i];
+      return;
+    }
+    if (mapping.teamName === undefined && has(col, "team") && has(col, "name")) {
+      mapping.teamName = i;
       return;
     }
     if (
@@ -196,7 +202,10 @@ export function parseRegistrants(
       teamName: team,
       isCaptain: true,
     });
-    for (const mate of splitNames(cell(row, mapping.teammates))) {
+    const mates = (mapping.teammates ?? []).flatMap((idx) =>
+      splitNames(cell(row, idx)),
+    );
+    for (const mate of mates) {
       out.push({ name: mate, signupType: "team", teamName: team });
     }
   }

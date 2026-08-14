@@ -32,6 +32,11 @@ import {
 } from "@/lib/labels";
 import { groupKey, groupKeyList, nextPow2 } from "@/lib/engine";
 import { MAX_PLAYERS } from "@/lib/constants";
+import {
+  SIGNUP_MODE_BLURBS,
+  SIGNUP_MODE_LABELS,
+  type SignupMode,
+} from "@/lib/teams/signup-mode";
 import type {
   AiTone,
   MainFormat,
@@ -121,6 +126,7 @@ export function CreateWizard() {
   const [teamMin, setTeamMin] = useState(2);
   const [teamMax, setTeamMax] = useState(6);
   const [signupEnabled, setSignupEnabled] = useState(false);
+  const [signupMode, setSignupMode] = useState<SignupMode>("both");
   const [googleFormUrl, setGoogleFormUrl] = useState("");
   const [initialTeams, setInitialTeams] = useState<string[]>([]);
   const [teamNameInput, setTeamNameInput] = useState("");
@@ -261,6 +267,7 @@ export function CreateWizard() {
       config.entryMode = "team";
       config.teamSize = { target: teamTarget, min: teamMin, max: teamMax };
       if (signupEnabled) config.signupEnabled = true;
+      if (signupMode !== "both") config.signupMode = signupMode;
       if (googleFormUrl.trim()) config.googleFormUrl = googleFormUrl.trim();
     }
 
@@ -483,6 +490,29 @@ export function CreateWizard() {
                   onChange={setSignupEnabled}
                   label="Open a public sign-up page (share a link or QR)"
                 />
+                <Field label="Who can sign up" className="mt-4">
+                  <Select
+                    value={signupMode}
+                    onValueChange={(v) => setSignupMode(v as SignupMode)}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(Object.keys(SIGNUP_MODE_LABELS) as SignupMode[]).map(
+                        (m) => (
+                          <SelectItem key={m} value={m}>
+                            {SIGNUP_MODE_LABELS[m]}
+                          </SelectItem>
+                        ),
+                      )}
+                    </SelectContent>
+                  </Select>
+                </Field>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  {SIGNUP_MODE_BLURBS[signupMode]} Applies to the sign-up link
+                  and QR code only.
+                </p>
                 <Field label="Google Form URL (optional)" className="mt-4">
                   <Input
                     value={googleFormUrl}
@@ -961,7 +991,11 @@ export function CreateWizard() {
                   />
                   <Review
                     label="Sign-ups"
-                    value={signupEnabled ? "Open" : "Closed"}
+                    value={
+                      signupEnabled
+                        ? `Open · ${SIGNUP_MODE_LABELS[signupMode]}`
+                        : "Closed"
+                    }
                   />
                 </>
               ) : (

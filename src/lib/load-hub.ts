@@ -8,6 +8,7 @@ import {
   type TeamRow,
   type TournamentRow,
 } from "@/lib/db";
+import { normalizeSignupMode } from "@/lib/teams/signup-mode";
 import type { HubData } from "@/components/hub/types";
 
 /**
@@ -110,6 +111,7 @@ export async function loadHub(slug: string): Promise<{
       entryMode: tournament.config?.entryMode ?? "individual",
       teamSize: tournament.config?.teamSize ?? null,
       signupEnabled: tournament.config?.signupEnabled ?? false,
+      signupMode: normalizeSignupMode(tournament.config?.signupMode),
       googleFormUrl: tournament.config?.googleFormUrl ?? null,
       stationLabels: tournament.config?.stationLabels ?? [],
     },

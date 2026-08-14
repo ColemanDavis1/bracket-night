@@ -4,6 +4,7 @@ import { CalendarDays, Lock } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { BrandMark } from "@/components/brand";
 import { SignupForm } from "@/components/signup-form";
+import { normalizeSignupMode } from "@/lib/teams/signup-mode";
 import type { TournamentRow } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
@@ -68,6 +69,7 @@ export default async function SignupPage({
             <SignupForm
               tournamentId={tour.id}
               teamSize={tour.config?.teamSize ?? null}
+              signupMode={normalizeSignupMode(tour.config?.signupMode)}
             />
           ) : (
             <div className="rounded-xl border border-border bg-card p-6 text-center">

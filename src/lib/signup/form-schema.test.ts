@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  AGREED,
   contactError,
   defaultSignupForm,
   describeAnswerErrors,
@@ -274,5 +275,47 @@ describe("contactError", () => {
   it("ignores optional and off fields", () => {
     const relaxed = { ...form, email: "optional" as const, phone: "off" as const };
     expect(contactError(relaxed, 0, { name: "Bob" })).toBeNull();
+  });
+});
+
+describe("consent questions", () => {
+  const waiver: FormQuestion = {
+    id: "waiver",
+    label: "I agree to the intramural participation waiver.",
+    type: "consent",
+    required: true,
+    scope: "person",
+  };
+
+  it("blocks submission until it is accepted", () => {
+    expect(validateAnswers([waiver], {})[0]!.message).toBe(
+      "You must accept this to sign up.",
+    );
+    expect(validateAnswers([waiver], { waiver: "" })[0]!.message).toBe(
+      "You must accept this to sign up.",
+    );
+  });
+
+  it("passes once accepted", () => {
+    expect(validateAnswers([waiver], { waiver: AGREED })).toEqual([]);
+  });
+
+  it("rejects any value other than acceptance", () => {
+    expect(validateAnswers([waiver], { waiver: "Nope" })[0]!.message).toBe(
+      "You must accept this to sign up.",
+    );
+  });
+
+  it("is always required, whatever the stored config claims", () => {
+    const out = normalizeSignupForm({
+      questions: [{ ...waiver, required: false }],
+    });
+    expect(out.questions[0]!.required).toBe(true);
+  });
+
+  it("stores a readable value for the export", () => {
+    expect(sanitizeAnswers([waiver], { waiver: AGREED })).toEqual({
+      waiver: AGREED,
+    });
   });
 });

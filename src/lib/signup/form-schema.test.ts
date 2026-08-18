@@ -319,3 +319,33 @@ describe("consent questions", () => {
     });
   });
 });
+
+describe("date, time, and link questions", () => {
+  const q = (type: FormQuestion["type"]): FormQuestion => ({
+    id: "x",
+    label: "When",
+    type,
+    required: false,
+    scope: "person",
+  });
+
+  it("accepts what the native pickers produce", () => {
+    expect(validateAnswers([q("date")], { x: "2026-09-12" })).toEqual([]);
+    expect(validateAnswers([q("time")], { x: "18:30" })).toEqual([]);
+    expect(validateAnswers([q("time")], { x: "18:30:00" })).toEqual([]);
+  });
+
+  it("rejects a date that is not one", () => {
+    expect(validateAnswers([q("date")], { x: "next tuesday" })[0]!.message).toBe(
+      "Enter a date.",
+    );
+  });
+
+  it("takes a bare domain as a link", () => {
+    expect(validateAnswers([q("url")], { x: "instagram.com/team" })).toEqual([]);
+    expect(validateAnswers([q("url")], { x: "https://x.co" })).toEqual([]);
+    expect(validateAnswers([q("url")], { x: "not a link" })[0]!.message).toBe(
+      "Enter a link.",
+    );
+  });
+});

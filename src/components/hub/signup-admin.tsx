@@ -128,8 +128,7 @@ export function SignupAdmin({
       </section>
 
       {usesCustomForm(style) ? (
-        <>
-          <section className="flex flex-col gap-4 rounded-xl border border-border p-4 sm:flex-row sm:items-center sm:justify-between">
+        <section className="flex flex-col gap-4 rounded-xl border border-border p-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="space-y-3">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-sm font-semibold">Public sign-up</span>
@@ -171,24 +170,30 @@ export function SignupAdmin({
                 Excel, one row per person.
               </p>
             </div>
-            {tournament.signupEnabled && signupUrl ? (
-              <QrCode value={signupUrl} size={120} caption="Scan to sign up" />
-            ) : null}
-          </section>
+          {tournament.signupEnabled && signupUrl ? (
+            <QrCode value={signupUrl} size={120} caption="Scan to sign up" />
+          ) : null}
+        </section>
+      ) : (
+        <p className="rounded-lg border border-border bg-card/60 px-3 py-2 text-sm text-muted-foreground">
+          Manual entry: nobody can reach the form yet. Build it below whenever
+          you like, then pick a style above to publish it.
+        </p>
+      )}
 
-          <SignupFormBuilder
-            tournamentId={tournament.id}
-            form={tournament.signupForm}
-            teamSize={tournament.teamSize}
-            teamMode={teamMode}
-          />
+      <SignupFormBuilder
+        tournamentId={tournament.id}
+        form={tournament.signupForm}
+        teamSize={tournament.teamSize}
+        teamMode={teamMode}
+      />
 
-          {/* Team mode has its own queue on the Teams tab, next to the rosters. */}
-          {!teamMode && pendingQueue.length ? (
-            <section>
-              <h3 className="mb-3 flex items-center gap-2 text-sm font-bold uppercase tracking-widest text-muted-foreground">
-                Approval queue <Badge>{pendingQueue.length}</Badge>
-              </h3>
+      {/* Team mode has its own queue on the Teams tab, next to the rosters. */}
+      {!teamMode && pendingQueue.length ? (
+        <section>
+          <h3 className="mb-3 flex items-center gap-2 text-sm font-bold uppercase tracking-widest text-muted-foreground">
+            Approval queue <Badge>{pendingQueue.length}</Badge>
+          </h3>
               <ul className="divide-y divide-border rounded-lg border border-border">
                 {pendingQueue.map((r) => (
                   <li
@@ -222,18 +227,11 @@ export function SignupAdmin({
                   </li>
                 ))}
               </ul>
-              <p className="mt-2 text-xs text-muted-foreground">
-                Approving adds the person to the bracket as their own entrant.
-              </p>
-            </section>
-          ) : null}
-        </>
-      ) : (
-        <p className="rounded-lg border border-border bg-card/60 px-3 py-2 text-sm text-muted-foreground">
-          Manual entry: there is no public form. Add players on the Players tab,
-          or switch to a style above to open sign-ups.
-        </p>
-      )}
+          <p className="mt-2 text-xs text-muted-foreground">
+            Approving adds the person to the bracket as their own entrant.
+          </p>
+        </section>
+      ) : null}
     </div>
   );
 }

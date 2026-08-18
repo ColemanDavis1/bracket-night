@@ -253,7 +253,6 @@ export function Hub({ data }: { data: HubData }) {
                 signupEnabled={tournament.signupEnabled}
                 signupMode={tournament.signupMode}
                 signupForm={tournament.signupForm}
-                googleFormUrl={tournament.googleFormUrl}
                 canAdd={canAddEntrant(state)}
                 lockReason={TEAMS_LOCKED_MESSAGE}
                 playedCount={playedCount}

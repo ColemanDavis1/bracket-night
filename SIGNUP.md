@@ -28,12 +28,16 @@ link and QR code.
   You can still add people by hand.
 - **Require a full roster at sign-up** — teams must name a complete roster to
   submit, using the min/max under Team size in Settings.
+The builder is always available, whatever the style. Build the form whenever you
+like; it only becomes reachable once you pick a public style and open sign-ups.
+
 - **Questions** — any number, in two groups:
   - *Asked once per team* — answered by whoever registers the team.
   - *Asked of every member* — repeated for each person on the roster.
 
 Question types: short answer, paragraph, multiple choice, checkboxes, yes/no,
-number, email, phone, and **agreement**. Each can be required or optional, carry help text, and be
+number, email, phone, date, time, link, and **agreement**. Every one can be
+required or optional. Each can be required or optional, carry help text, and be
 shown conditionally — *only show when [question] is [answer]* — which is how
 follow-ups like "if yes, which ones?" work.
 
@@ -95,9 +99,10 @@ Three layers, because the sign-up endpoint is public:
 Unknown or hidden answers are dropped rather than stored, and text is
 length-capped, so nothing arbitrary reaches the database through the public path.
 
-## Google Forms
+## Importing people from a spreadsheet
 
-Still supported as an alternative — see [GOOGLE_FORM.md](GOOGLE_FORM.md). The
-native form is usually the better choice now: it stores structured answers,
-enforces roster rules at submission, and needs no CSV round trip. Use a Google
-Form when you specifically want responses living in your own Google account.
+Separate from the form: **Teams tab → Import CSV** bulk-adds people from any
+spreadsheet with a name column (plus optional email, phone, team name, and
+teammate columns). Everything imported lands in the approval queue. Use it to
+carry over a roster you already collected elsewhere; new sign-ups should go
+through the form, which stores structured answers the import cannot.

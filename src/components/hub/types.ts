@@ -1,6 +1,7 @@
 import type {
   AiTone,
   EngineState,
+  StageConfig,
   MainFormat,
   PointsTiebreak,
   ScoringMode,
@@ -31,6 +32,8 @@ export interface HubTournament {
   advancePerGroup: number | null;
   groupDoubleRoundRobin: boolean;
   knockoutFormat: "single_elim" | "double_elim" | "triple_elim" | null;
+  /** multi_stage pipeline, editable on the Settings tab. */
+  stages: StageConfig[] | null;
   /** Parallel stations (Feature 12). Defaults to 1. */
   numStations: number;
   /** Best-of-N series length (Feature 13). Defaults to 1. */

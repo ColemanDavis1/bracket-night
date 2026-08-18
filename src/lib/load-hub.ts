@@ -135,6 +135,7 @@ export async function loadHub(slug: string): Promise<{
       advancePerGroup: tournament.config?.advancePerGroup ?? null,
       groupDoubleRoundRobin: tournament.config?.groupDoubleRoundRobin ?? false,
       knockoutFormat: tournament.config?.knockoutFormat ?? null,
+      stages: tournament.config?.stages ?? null,
       numStations: Math.min(8, Math.max(1, tournament.config?.numStations ?? 1)),
       seriesLength: tournament.config?.seriesLength ?? 1,
       selfServiceScoring: tournament.config?.selfServiceScoring ?? false,

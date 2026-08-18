@@ -100,3 +100,43 @@ describe("sanitizeSettingsPatch", () => {
     });
   });
 });
+
+describe("structuralChanges with a stage pipeline", () => {
+  const withStages: SettingsSnapshot = {
+    ...current,
+    format: "multi_stage",
+    stages: [
+      { type: "group", numGroups: 4, advancePerGroup: 2, draw: "random" },
+      { type: "single_elim" },
+    ],
+  };
+
+  it("ignores an identical pipeline passed as a fresh array", () => {
+    // A reference compare would report a rebuild on every save.
+    const patch = { stages: structuredClone(withStages.stages) };
+    expect(structuralChanges(withStages, patch)).toEqual([]);
+  });
+
+  it("reports a pipeline whose contents changed", () => {
+    expect(
+      structuralChanges(withStages, {
+        stages: [
+          { type: "group", numGroups: 8, advancePerGroup: 2, draw: "random" },
+          { type: "single_elim" },
+        ],
+      }),
+    ).toEqual(["stages"]);
+  });
+
+  it("reports a pipeline that gained or lost a stage", () => {
+    expect(
+      structuralChanges(withStages, { stages: [{ type: "single_elim" }] }),
+    ).toEqual(["stages"]);
+  });
+
+  it("reports adding a pipeline where there was none", () => {
+    expect(
+      structuralChanges(current, { stages: [{ type: "single_elim" }] }),
+    ).toEqual(["stages"]);
+  });
+});

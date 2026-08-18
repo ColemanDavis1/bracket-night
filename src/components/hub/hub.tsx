@@ -27,6 +27,7 @@ import { PendingApprovals } from "./pending-approvals";
 import { TeamsAdmin } from "./teams-admin";
 import { StationsAdmin } from "./stations-admin";
 import { SettingsAdmin } from "./settings-admin";
+import { SignupAdmin } from "./signup-admin";
 import { canAddEntrant, TEAMS_LOCKED_MESSAGE } from "@/lib/teams/gate";
 
 export function Hub({ data }: { data: HubData }) {
@@ -131,6 +132,14 @@ export function Hub({ data }: { data: HubData }) {
             <TabsTrigger value="power">Power Rankings</TabsTrigger>
             <TabsTrigger value="previews">Previews</TabsTrigger>
             <TabsTrigger value="awards">Stats & Awards</TabsTrigger>
+            {isOrganizer ? (
+              <TabsTrigger value="signups">
+                Sign-ups
+                {!teamMode && pendingSignups > 0 ? (
+                  <Badge className="ml-1.5">{pendingSignups}</Badge>
+                ) : null}
+              </TabsTrigger>
+            ) : null}
             {showTeams ? (
               <TabsTrigger value="teams">
                 Teams
@@ -220,6 +229,16 @@ export function Hub({ data }: { data: HubData }) {
             <Awards state={state} names={names} />
           </TabsContent>
 
+          {isOrganizer ? (
+            <TabsContent value="signups">
+              <SignupAdmin
+                tournament={tournament}
+                registrants={data.registrants}
+                teams={data.teams}
+              />
+            </TabsContent>
+          ) : null}
+
           {showTeams ? (
             <TabsContent value="teams">
               <TeamsAdmin
@@ -233,6 +252,7 @@ export function Hub({ data }: { data: HubData }) {
                 teamSize={tournament.teamSize}
                 signupEnabled={tournament.signupEnabled}
                 signupMode={tournament.signupMode}
+                signupForm={tournament.signupForm}
                 googleFormUrl={tournament.googleFormUrl}
                 canAdd={canAddEntrant(state)}
                 lockReason={TEAMS_LOCKED_MESSAGE}

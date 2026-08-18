@@ -9,6 +9,8 @@ import {
   type TournamentRow,
 } from "@/lib/db";
 import { normalizeSignupMode } from "@/lib/teams/signup-mode";
+import { normalizeSignupForm } from "@/lib/signup/form-schema";
+import { inferSignupStyle, normalizeSignupStyle } from "@/lib/signup/style";
 import type { HubData } from "@/components/hub/types";
 
 /**
@@ -32,6 +34,9 @@ export async function loadHub(slug: string): Promise<{
 
   const selfService = tournament.config?.selfServiceScoring === true;
   const teamMode = tournament.config?.entryMode === "team";
+  // Individual sign-up keeps an approval queue too, so registrants load
+  // whenever a public form is in play — not only in team mode.
+  const hasPeople = teamMode || tournament.config?.signupEnabled === true;
   const [
     { data: players },
     { data: results },
@@ -63,7 +68,7 @@ export async function loadHub(slug: string): Promise<{
           .eq("tournament_id", tournament.id)
           .order("position")
       : Promise.resolve({ data: [] as TeamRow[] }),
-    teamMode
+    hasPeople
       ? supabase
           .from("registrants")
           .select("*")
@@ -112,6 +117,11 @@ export async function loadHub(slug: string): Promise<{
       teamSize: tournament.config?.teamSize ?? null,
       signupEnabled: tournament.config?.signupEnabled ?? false,
       signupMode: normalizeSignupMode(tournament.config?.signupMode),
+      // Events created before styles existed are read from their primitives.
+      signupStyle: tournament.config?.signupStyle
+        ? normalizeSignupStyle(tournament.config.signupStyle)
+        : inferSignupStyle(tournament.config ?? {}),
+      signupForm: normalizeSignupForm(tournament.config?.signupForm),
       googleFormUrl: tournament.config?.googleFormUrl ?? null,
       stationLabels: tournament.config?.stationLabels ?? [],
     },
@@ -156,6 +166,8 @@ export async function loadHub(slug: string): Promise<{
       status: r.status,
       source: r.source,
       checkedIn: r.checked_in,
+      answers: r.answers ?? {},
+      playerId: r.player_id ?? null,
     })),
     stations: ((stations ?? []) as StationAssignmentRow[]).map((s) => ({
       matchKey: s.match_key,

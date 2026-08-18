@@ -7,6 +7,8 @@ import type {
   SeedingMethod,
 } from "@/lib/engine";
 import type { SignupMode } from "@/lib/teams/signup-mode";
+import type { AnswerMap, SignupFormConfig } from "@/lib/signup/form-schema";
+import type { SignupStyle } from "@/lib/signup/style";
 
 export interface HubTournament {
   id: string;
@@ -43,6 +45,10 @@ export interface HubTournament {
   signupEnabled: boolean;
   /** Which sign-up paths the public page offers. */
   signupMode: SignupMode;
+  /** Organizer-facing preset: large event, manual entry, or individual. */
+  signupStyle: SignupStyle;
+  /** The custom sign-up form definition. */
+  signupForm: SignupFormConfig;
   /** Organizer's Google Form link, if any. */
   googleFormUrl: string | null;
   /** Human names for the stations/courts. */
@@ -93,6 +99,10 @@ export interface HubRegistrant {
   status: "pending" | "approved" | "declined";
   source: "native" | "google_csv" | "manual" | "walkin";
   checkedIn: boolean;
+  /** Custom form answers, keyed by question id. */
+  answers: AnswerMap;
+  /** Set when this person is themselves a bracket entrant. */
+  playerId: string | null;
 }
 
 /** Live per-match court/station state. */

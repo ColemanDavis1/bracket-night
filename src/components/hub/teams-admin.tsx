@@ -72,6 +72,11 @@ import {
   SIGNUP_MODE_LABELS,
   type SignupMode,
 } from "@/lib/teams/signup-mode";
+import {
+  questionsFor,
+  type FormQuestion,
+  type SignupFormConfig,
+} from "@/lib/signup/form-schema";
 import type { HubRegistrant, HubTeam } from "./types";
 
 const SOURCE_LABELS: Record<HubRegistrant["source"], string> = {
@@ -92,6 +97,7 @@ export function TeamsAdmin({
   teamSize,
   signupEnabled,
   signupMode,
+  signupForm,
   googleFormUrl,
   canAdd,
   lockReason,
@@ -107,6 +113,7 @@ export function TeamsAdmin({
   teamSize: { target: number; min: number; max: number } | null;
   signupEnabled: boolean;
   signupMode: SignupMode;
+  signupForm: SignupFormConfig;
   googleFormUrl: string | null;
   canAdd: boolean;
   lockReason: string;
@@ -135,6 +142,8 @@ export function TeamsAdmin({
   const soloPool = approved.filter((r) => !r.teamId);
 
   const checkedInTeams = teams.filter((t) => t.checkedIn).length;
+  // Per-person answers are worth seeing while sorting people into teams.
+  const personQuestions = questionsFor(signupForm, "person");
 
   function run(fn: () => Promise<void>) {
     setError(null);
@@ -350,6 +359,7 @@ export function TeamsAdmin({
               teams={teams}
               currentTeamId={null}
               disabled={pending}
+              questions={personQuestions}
               selected={selected}
               onToggleSelect={toggleSelect}
               onSelectAll={selectAll}
@@ -372,6 +382,7 @@ export function TeamsAdmin({
               teams={teams}
               teamSize={teamSize}
               canAdd={canAdd}
+              questions={personQuestions}
               playedCount={playedCount}
               onlyNotArrived={onlyNotArrived}
               disabled={pending}
@@ -598,6 +609,7 @@ function TeamCard({
   teams,
   teamSize,
   canAdd,
+  questions,
   playedCount,
   onlyNotArrived,
   disabled,
@@ -613,6 +625,7 @@ function TeamCard({
   teams: HubTeam[];
   teamSize: { target: number; min: number; max: number } | null;
   canAdd: boolean;
+  questions: FormQuestion[];
   playedCount: number;
   onlyNotArrived: boolean;
   disabled: boolean;
@@ -699,6 +712,7 @@ function TeamCard({
         teams={teams}
         currentTeamId={team.id}
         disabled={disabled}
+        questions={questions}
         selected={selected}
         onToggleSelect={onToggleSelect}
         onSelectAll={onSelectAll}
@@ -803,6 +817,7 @@ function MemberList({
   teams,
   currentTeamId,
   disabled,
+  questions,
   selected,
   onToggleSelect,
   onSelectAll,
@@ -814,6 +829,7 @@ function MemberList({
   teams: HubTeam[];
   currentTeamId: string | null;
   disabled: boolean;
+  questions: FormQuestion[];
   selected: ReadonlySet<string>;
   onToggleSelect: (registrantId: string, on: boolean) => void;
   onSelectAll: (registrantIds: string[], on: boolean) => void;
@@ -864,6 +880,7 @@ function MemberList({
             {m.isCaptain ? (
               <span className="ml-1 text-xs text-muted-foreground">(C)</span>
             ) : null}
+            <AnswerSummary questions={questions} answers={m.answers} />
           </span>
           {currentTeamId ? (
             <button
@@ -909,6 +926,29 @@ function MemberList({
         </li>
       ))}
     </ul>
+  );
+}
+
+/** Their form answers, one muted line under the name. */
+function AnswerSummary({
+  questions,
+  answers,
+}: {
+  questions: FormQuestion[];
+  answers: HubRegistrant["answers"];
+}) {
+  const filled = questions
+    .map((q) => {
+      const v = answers[q.id];
+      if (v === undefined || (Array.isArray(v) && !v.length)) return null;
+      return `${q.label}: ${Array.isArray(v) ? v.join(", ") : v}`;
+    })
+    .filter((line): line is string => line !== null);
+  if (!filled.length) return null;
+  return (
+    <span className="block truncate text-xs text-muted-foreground">
+      {filled.join(" · ")}
+    </span>
   );
 }
 

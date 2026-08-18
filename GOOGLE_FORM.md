@@ -1,5 +1,9 @@
 # Google Form setup for sign-ups
 
+> The app now has a built-in form builder that stores structured answers and
+> enforces roster rules at submission — see [SIGNUP.md](SIGNUP.md). Use a Google
+> Form when you specifically want responses in your own Google account.
+
 ## Fastest path: let the app build the form
 
 Teams tab → **Generate a Google Form**. The app emits a Google Apps Script matched to

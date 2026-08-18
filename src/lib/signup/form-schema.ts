@@ -23,6 +23,9 @@ export type QuestionType =
   | "number"
   | "email"
   | "phone"
+  | "date"
+  | "time"
+  | "url"
   | "consent";
 
 export type QuestionScope = "team" | "person";
@@ -83,6 +86,9 @@ export const QUESTION_TYPE_LABELS: Record<QuestionType, string> = {
   number: "Number",
   email: "Email",
   phone: "Phone",
+  date: "Date",
+  time: "Time",
+  url: "Link",
   consent: "Agreement (must be accepted)",
 };
 
@@ -239,6 +245,16 @@ function valueError(q: FormQuestion, value: AnswerValue): string | null {
       return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim())
         ? null
         : "Enter a valid email address.";
+    case "date":
+      return /^\d{4}-\d{2}-\d{2}$/.test(s.trim()) ? null : "Enter a date.";
+    case "time":
+      return /^\d{2}:\d{2}(:\d{2})?$/.test(s.trim()) ? null : "Enter a time.";
+    case "url":
+      // Deliberately loose: people paste "instagram.com/x" as often as a full
+      // URL, and rejecting that helps nobody.
+      return s.trim().includes(".") && !/\s/.test(s.trim())
+        ? null
+        : "Enter a link.";
     case "paragraph":
       return s.length <= MAX_PARAGRAPH
         ? null

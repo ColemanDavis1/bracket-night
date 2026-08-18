@@ -134,7 +134,6 @@ export function CreateWizard() {
   const [signupEnabled, setSignupEnabled] = useState(false);
   const [signupMode, setSignupMode] = useState<SignupMode>("both");
   const [signupStyle, setSignupStyle] = useState<SignupStyle>("manual");
-  const [googleFormUrl, setGoogleFormUrl] = useState("");
   const [initialTeams, setInitialTeams] = useState<string[]>([]);
   const [teamNameInput, setTeamNameInput] = useState("");
   const [stationLabels, setStationLabels] = useState<string[]>([]);
@@ -282,7 +281,6 @@ export function CreateWizard() {
       config.teamSize = { target: teamTarget, min: teamMin, max: teamMax };
       if (signupEnabled) config.signupEnabled = true;
       if (signupMode !== "both") config.signupMode = signupMode;
-      if (googleFormUrl.trim()) config.googleFormUrl = googleFormUrl.trim();
     }
 
     const manualSeedOrderIndexes =
@@ -532,17 +530,6 @@ export function CreateWizard() {
                 <p className="mt-2 text-xs text-muted-foreground">
                   {SIGNUP_MODE_BLURBS[signupMode]} Applies to the sign-up link
                   and QR code only.
-                </p>
-                <Field label="Google Form URL (optional)" className="mt-4">
-                  <Input
-                    value={googleFormUrl}
-                    onChange={(e) => setGoogleFormUrl(e.target.value)}
-                    placeholder="https://forms.gle/…"
-                  />
-                </Field>
-                <p className="mt-2 text-xs text-muted-foreground">
-                  Paste your Google Form link to display and share it. Import the
-                  CSV export later from the team admin.
                 </p>
               </div>
 

@@ -108,6 +108,16 @@ export function QuestionFields({
   );
 }
 
+/** Native input type per question type; anything unlisted is plain text. */
+const INPUT_TYPES: Partial<Record<FormQuestion["type"], string>> = {
+  number: "number",
+  email: "email",
+  phone: "tel",
+  date: "date",
+  time: "time",
+  url: "url",
+};
+
 function QuestionInput({
   id,
   question,
@@ -208,15 +218,7 @@ function QuestionInput({
           id={id}
           value={text}
           disabled={disabled}
-          type={
-            question.type === "number"
-              ? "number"
-              : question.type === "email"
-                ? "email"
-                : question.type === "phone"
-                  ? "tel"
-                  : "text"
-          }
+          type={INPUT_TYPES[question.type] ?? "text"}
           onChange={(e) => onChange(e.target.value)}
         />
       );

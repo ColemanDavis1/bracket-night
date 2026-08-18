@@ -6,7 +6,6 @@ import {
   Check,
   CheckCircle2,
   Copy,
-  FileSpreadsheet,
   Lock,
   LockOpen,
   Plus,
@@ -32,16 +31,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { QrCode } from "@/components/qr-code";
-import {
-  DEFAULT_TEAM_SIZE,
-  resolveTeamSize,
-  fillStatus,
-} from "@/lib/teams/sizes";
-import {
-  buildGoogleFormScript,
-  teammateQuestionCount,
-  type FormSpec,
-} from "@/lib/teams/google-form-script";
+import { resolveTeamSize, fillStatus } from "@/lib/teams/sizes";
 import {
   parseRegistrants,
   previewRegistrantImport,
@@ -81,7 +71,7 @@ import type { HubRegistrant, HubTeam } from "./types";
 
 const SOURCE_LABELS: Record<HubRegistrant["source"], string> = {
   native: "Sign-up",
-  google_csv: "Google Form",
+  google_csv: "Imported",
   manual: "Manual",
   walkin: "Walk-in",
 };
@@ -98,7 +88,6 @@ export function TeamsAdmin({
   signupEnabled,
   signupMode,
   signupForm,
-  googleFormUrl,
   canAdd,
   lockReason,
   playedCount,
@@ -114,7 +103,6 @@ export function TeamsAdmin({
   signupEnabled: boolean;
   signupMode: SignupMode;
   signupForm: SignupFormConfig;
-  googleFormUrl: string | null;
   canAdd: boolean;
   lockReason: string;
   /** Recorded scores — a team leaving the draw would orphan them. */
@@ -219,7 +207,6 @@ export function TeamsAdmin({
         tournamentId={tournamentId}
         signupEnabled={signupEnabled}
         signupMode={signupMode}
-        googleFormUrl={googleFormUrl}
         onToggleSignups={(v) =>
           run(() => setTeamMode(tournamentId, { signupEnabled: v }))
         }
@@ -410,18 +397,6 @@ export function TeamsAdmin({
         />
       </div>
 
-      <GoogleFormBuilder
-        spec={{
-          eventName,
-          gameName,
-          eventDate,
-          signupMode,
-          teamMax: teamSize?.max ?? DEFAULT_TEAM_SIZE.max,
-        }}
-        savedUrl={googleFormUrl}
-        disabled={pending}
-        onSaveUrl={(url) => run(() => setTeamMode(tournamentId, { googleFormUrl: url }))}
-      />
     </div>
   );
 }
@@ -432,7 +407,6 @@ function ShareRow({
   slug,
   signupEnabled,
   signupMode,
-  googleFormUrl,
   onToggleSignups,
   onChangeMode,
   disabled,
@@ -441,7 +415,6 @@ function ShareRow({
   tournamentId: string;
   signupEnabled: boolean;
   signupMode: SignupMode;
-  googleFormUrl: string | null;
   onToggleSignups: (v: boolean) => void;
   onChangeMode: (mode: SignupMode) => void;
   disabled: boolean;
@@ -497,9 +470,6 @@ function ShareRow({
         </div>
         <div className="flex flex-wrap gap-2">
           <CopyButton label="Copy sign-up link" value={signupUrl} />
-          {googleFormUrl ? (
-            <CopyButton label="Copy Google Form" value={googleFormUrl} />
-          ) : null}
         </div>
       </div>
       {signupEnabled ? (
@@ -1050,123 +1020,6 @@ function AddWalkin({
   );
 }
 
-/**
- * Build a Google Form for this event without asking the organizer to wire up
- * OAuth: we emit an Apps Script they run in their own account, so the form is
- * created in their Drive and owned by them. Questions are worded to match the
- * CSV importer, so the round trip needs no manual column mapping.
- */
-function GoogleFormBuilder({
-  spec,
-  savedUrl,
-  disabled,
-  onSaveUrl,
-}: {
-  spec: Omit<FormSpec, "collectPhone">;
-  savedUrl: string | null;
-  disabled: boolean;
-  onSaveUrl: (url: string) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const [collectPhone, setCollectPhone] = useState(false);
-  const [url, setUrl] = useState(savedUrl ?? "");
-
-  const script = useMemo(
-    () => buildGoogleFormScript({ ...spec, collectPhone }),
-    [spec, collectPhone],
-  );
-  const teammates = teammateQuestionCount(spec.teamMax);
-
-  return (
-    <section className="rounded-lg border border-border p-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <Label>Google Form</Label>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Generate a form matched to this event — {SIGNUP_MODE_LABELS[
-              spec.signupMode
-            ].toLowerCase()}
-            {teammates > 0
-              ? `, ${teammates} teammate question${teammates === 1 ? "" : "s"}`
-              : ""}
-            . Created in your own Google Drive.
-          </p>
-        </div>
-        <Button
-          size="sm"
-          variant={open ? "ghost" : "outline"}
-          onClick={() => setOpen((v) => !v)}
-        >
-          <FileSpreadsheet className="h-4 w-4" />
-          {open ? "Hide" : "Generate a Google Form"}
-        </Button>
-      </div>
-
-      {open ? (
-        <div className="mt-4 space-y-3">
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={collectPhone}
-              onChange={(e) => setCollectPhone(e.target.checked)}
-            />
-            Also ask for a phone number
-          </label>
-
-          <ol className="list-decimal space-y-1 pl-5 text-xs text-muted-foreground">
-            <li>
-              Copy the script below and open{" "}
-              <a
-                href="https://script.google.com/home/projects/create"
-                target="_blank"
-                rel="noreferrer"
-                className="font-medium text-primary hover:underline"
-              >
-                script.google.com
-              </a>
-              .
-            </li>
-            <li>Replace everything in the editor with it, then press Run.</li>
-            <li>
-              Approve the permission prompt — it only creates a new form.
-            </li>
-            <li>Open View &gt; Logs, copy the form link, and paste it below.</li>
-          </ol>
-
-          <textarea
-            readOnly
-            value={script}
-            rows={12}
-            onFocus={(e) => e.currentTarget.select()}
-            className="w-full rounded-md border border-border bg-muted/40 px-3 py-2 font-mono text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          />
-          <CopyButton label="Copy the script" value={script} />
-
-          <div className="flex flex-wrap items-end gap-2">
-            <div className="flex-1">
-              <Label className="mb-1.5 block text-xs">
-                Form link (saved with the event)
-              </Label>
-              <Input
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                placeholder="https://docs.google.com/forms/…"
-              />
-            </div>
-            <Button
-              size="sm"
-              disabled={disabled || url.trim() === (savedUrl ?? "")}
-              onClick={() => onSaveUrl(url.trim())}
-            >
-              Save link
-            </Button>
-          </div>
-        </div>
-      ) : null}
-    </section>
-  );
-}
-
 function CsvImport({
   existingNames,
   disabled,
@@ -1189,12 +1042,12 @@ function CsvImport({
 
   return (
     <section className="rounded-lg border border-border p-4">
-      <Label className="mb-2 block">Import Google Form CSV</Label>
+      <Label className="mb-2 block">Import CSV</Label>
       <textarea
         value={text}
         onChange={(e) => setText(e.target.value)}
         rows={4}
-        placeholder="Paste your Google Form CSV export here (headers included)…"
+        placeholder="Paste a spreadsheet export here (headers included)…"
         className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       />
       {preview ? (

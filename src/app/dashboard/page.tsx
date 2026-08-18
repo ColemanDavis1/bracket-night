@@ -11,6 +11,7 @@ import {
   type DashboardTournament,
 } from "@/components/dashboard/tournament-card";
 import { BulkDeletePast } from "@/components/dashboard/bulk-delete-past";
+import { isAdminRole, ROLE_LABELS } from "@/lib/access/roles";
 
 export const dynamic = "force-dynamic";
 
@@ -26,6 +27,32 @@ export default async function DashboardPage() {
     .select("*, players(count)")
     .eq("organizer_id", user.id)
     .order("created_at", { ascending: false });
+
+  // Events someone else invited me to help run. RLS returns only my own rows.
+  const { data: myAdminRows } = await supabase
+    .from("tournament_admins")
+    .select("tournament_id, role");
+  const sharedRoles = new Map(
+    ((myAdminRows ?? []) as { tournament_id: string; role: string }[]).map((a) => [
+      a.tournament_id,
+      a.role,
+    ]),
+  );
+  const { data: sharedTournaments } = sharedRoles.size
+    ? await supabase
+        .from("tournaments")
+        .select("id, name, slug, game_name, status")
+        .in("id", [...sharedRoles.keys()])
+        .is("archived_at", null)
+        .order("created_at", { ascending: false })
+    : { data: [] };
+  const shared = ((sharedTournaments ?? []) as {
+    id: string;
+    name: string;
+    slug: string;
+    game_name: string | null;
+    status: string;
+  }[]).filter((t) => isAdminRole(sharedRoles.get(t.id)));
 
   const rows = (tournaments ?? []) as DashboardTournament[];
   const archived = rows.filter((t) => t.archived_at != null);
@@ -75,6 +102,42 @@ export default async function DashboardPage() {
         ) : (
           <div className="space-y-8">
             <Section title="Active" tournaments={active} />
+
+            {shared.length > 0 ? (
+              <section className="mt-10">
+                <h2 className="text-sm font-bold uppercase tracking-widest text-muted-foreground">
+                  Shared with you
+                </h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Events someone invited you to help run.
+                </p>
+                <ul className="mt-3 divide-y divide-border rounded-lg border border-border">
+                  {shared.map((t) => {
+                    const role = sharedRoles.get(t.id);
+                    return (
+                      <li key={t.id}>
+                        <Link
+                          href={`/t/${t.slug}/manage`}
+                          className="flex flex-wrap items-center justify-between gap-2 px-3 py-2.5 hover:bg-card/60"
+                        >
+                          <span className="min-w-0">
+                            <span className="text-sm font-medium">{t.name}</span>
+                            {t.game_name ? (
+                              <span className="ml-2 text-xs text-muted-foreground">
+                                {t.game_name}
+                              </span>
+                            ) : null}
+                          </span>
+                          <span className="text-xs font-semibold text-primary">
+                            {isAdminRole(role) ? ROLE_LABELS[role] : "Helper"}
+                          </span>
+                        </Link>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </section>
+            ) : null}
             {past.length > 0 ? (
               <Section
                 title="Past"

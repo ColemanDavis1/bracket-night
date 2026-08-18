@@ -19,7 +19,11 @@ export default async function ManageHubPage({
 
   const result = await loadHub(slug);
   if (!result) notFound();
-  if (result.organizerId !== user.id) redirect(`/t/${slug}`);
+  // The owner plus anyone they invited. loadHub resolves the role (by account or
+  // by the email the invite was sent to); no role means no manage view.
+  if (result.data.viewerRole === null) redirect(`/t/${slug}`);
 
-  return <Hub data={{ ...result.data, isOrganizer: true }} />;
+  // Don't force isOrganizer here: the role decides which tabs appear, so a
+  // scorekeeper sees the scoring surfaces and not the settings.
+  return <Hub data={result.data} />;
 }

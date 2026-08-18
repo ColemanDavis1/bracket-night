@@ -37,6 +37,12 @@ import {
   SIGNUP_MODE_LABELS,
   type SignupMode,
 } from "@/lib/teams/signup-mode";
+import {
+  SIGNUP_STYLE_BLURBS,
+  SIGNUP_STYLE_LABELS,
+  presetForStyle,
+  type SignupStyle,
+} from "@/lib/signup/style";
 import type {
   AiTone,
   MainFormat,
@@ -127,6 +133,7 @@ export function CreateWizard() {
   const [teamMax, setTeamMax] = useState(6);
   const [signupEnabled, setSignupEnabled] = useState(false);
   const [signupMode, setSignupMode] = useState<SignupMode>("both");
+  const [signupStyle, setSignupStyle] = useState<SignupStyle>("manual");
   const [googleFormUrl, setGoogleFormUrl] = useState("");
   const [initialTeams, setInitialTeams] = useState<string[]>([]);
   const [teamNameInput, setTeamNameInput] = useState("");
@@ -201,7 +208,9 @@ export function CreateWizard() {
         return "Team names must be unique.";
     }
     if (step === 1 && entryMode === "individual") {
-      if (validPlayers.length < 2) return "Add at least 2 players.";
+      if (validPlayers.length < 2 && signupStyle !== "individual") {
+        return "Add at least 2 players.";
+      }
       if (validPlayers.length > MAX_PLAYERS)
         return `Maximum ${MAX_PLAYERS} players.`;
       const names = validPlayers.map((p) => p.name.trim().toLowerCase());
@@ -262,6 +271,11 @@ export function CreateWizard() {
         (stationLabels[i] ?? "").trim(),
       );
       if (labels.some((l) => l)) config.stationLabels = labels;
+    }
+    config.signupStyle = signupStyle;
+    if (signupStyle === "individual") {
+      config.signupEnabled = true;
+      config.signupMode = "solo_only";
     }
     if (entryMode === "team") {
       config.entryMode = "team";
@@ -421,23 +435,29 @@ export function CreateWizard() {
             </Field>
 
             <div className="mt-6">
-              <Label className="mb-2 block">Entry mode</Label>
+              <Label className="mb-2 block">How do people join?</Label>
               <ChoiceCards
-                value={entryMode}
-                onChange={(v) => setEntryMode(v as "individual" | "team")}
-                options={[
-                  {
-                    value: "individual",
-                    title: "Individual",
-                    desc: "Each entrant is one person. The classic flow.",
-                  },
-                  {
-                    value: "team",
-                    title: "Team (large events)",
-                    desc: "People sign up solo or as teams; teams compete as one entrant. Adds sign-up links, check-in, and a call board.",
-                  },
-                ]}
+                value={signupStyle}
+                onChange={(v) => {
+                  const next = v as SignupStyle;
+                  setSignupStyle(next);
+                  const preset = presetForStyle(next);
+                  setEntryMode(preset.entryMode);
+                  setSignupEnabled(preset.signupEnabled);
+                  setSignupMode(preset.signupMode);
+                }}
+                options={(Object.keys(SIGNUP_STYLE_LABELS) as SignupStyle[]).map(
+                  (s) => ({
+                    value: s,
+                    title: SIGNUP_STYLE_LABELS[s],
+                    desc: SIGNUP_STYLE_BLURBS[s],
+                  }),
+                )}
               />
+              <p className="mt-2 text-xs text-muted-foreground">
+                You can change this later, and build the form itself on the
+                Sign-ups tab once the event exists.
+              </p>
             </div>
           </Step>
         )}

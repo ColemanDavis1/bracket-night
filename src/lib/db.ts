@@ -10,6 +10,8 @@ import type {
 import { buildEngineState, type TournamentConfig } from "@/lib/engine";
 import type { GroupAssignment, StageConfig } from "@/lib/engine";
 import type { SignupMode } from "@/lib/teams/signup-mode";
+import type { SignupFormConfig } from "@/lib/signup/form-schema";
+import type { SignupStyle } from "@/lib/signup/style";
 
 /** Extra config persisted in tournaments.config (jsonb). */
 export interface TournamentConfigJson {
@@ -45,6 +47,10 @@ export interface TournamentConfigJson {
    * Defaults to "both".
    */
   signupMode?: SignupMode;
+  /** Organizer-facing preset: large event, manual entry, or individual. */
+  signupStyle?: SignupStyle;
+  /** Custom sign-up form definition (questions, close time, contact rules). */
+  signupForm?: SignupFormConfig;
   /** Organizer-owned Google Form link to display/share. */
   googleFormUrl?: string;
   /** Human names for stations/courts, e.g. ["Court 1","Table A"]. */
@@ -134,6 +140,10 @@ export interface RegistrantRow {
   checked_in: boolean;
   checked_in_at: string | null;
   notes: string | null;
+  /** Custom form answers, keyed by question id. Team answers sit on the captain. */
+  answers: Record<string, string | string[]>;
+  /** Set when this person is themselves a bracket entrant (individual style). */
+  player_id: string | null;
   created_at: string;
 }
 

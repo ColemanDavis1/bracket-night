@@ -5,6 +5,11 @@ import { createClient } from "@/lib/supabase/server";
 import { BrandMark } from "@/components/brand";
 import { SignupForm } from "@/components/signup-form";
 import { normalizeSignupMode } from "@/lib/teams/signup-mode";
+import {
+  formClosed,
+  FORM_CLOSED_MESSAGE,
+  normalizeSignupForm,
+} from "@/lib/signup/form-schema";
 import type { TournamentRow } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
@@ -24,10 +29,13 @@ export default async function SignupPage({
   if (!data) notFound();
   const tour = data as TournamentRow;
 
+  // Sign-ups are gated by the switch, the event still running, and the form's
+  // own close time. Entry mode no longer matters: individual events collect
+  // sign-ups too, they just become entrants directly rather than teams.
+  const form = normalizeSignupForm(tour.config?.signupForm);
+  const closed = formClosed(form);
   const open =
-    tour.config?.entryMode === "team" &&
-    tour.config?.signupEnabled === true &&
-    tour.status !== "complete";
+    tour.config?.signupEnabled === true && tour.status !== "complete" && !closed;
 
   const dateLabel = tour.event_date
     ? new Date(tour.event_date).toLocaleDateString(undefined, {
@@ -70,14 +78,16 @@ export default async function SignupPage({
               tournamentId={tour.id}
               teamSize={tour.config?.teamSize ?? null}
               signupMode={normalizeSignupMode(tour.config?.signupMode)}
+              form={form}
             />
           ) : (
             <div className="rounded-xl border border-border bg-card p-6 text-center">
               <Lock className="mx-auto h-8 w-8 text-muted-foreground" />
               <h2 className="mt-3 text-lg font-bold">Sign-ups are closed</h2>
               <p className="mt-1 text-sm text-muted-foreground">
-                Registration for this event isn&apos;t open right now. Check with
-                the organizer or follow the live event.
+                {closed
+                  ? FORM_CLOSED_MESSAGE
+                  : "Registration for this event isn't open right now. Check with the organizer or follow the live event."}
               </p>
               <Link
                 href={`/t/${slug}`}

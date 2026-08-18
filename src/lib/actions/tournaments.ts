@@ -37,6 +37,24 @@ import {
   type SignupMode,
 } from "@/lib/teams/signup-mode";
 import {
+  contactError,
+  describeAnswerErrors,
+  formClosed,
+  FORM_CLOSED_MESSAGE,
+  normalizeSignupForm,
+  questionsFor,
+  rosterSizeError,
+  sanitizeAnswers,
+  validateAnswers,
+  type AnswerMap,
+  type SignupFormConfig,
+} from "@/lib/signup/form-schema";
+import {
+  normalizeSignupStyle,
+  presetForStyle,
+  type SignupStyle,
+} from "@/lib/signup/style";
+import {
   rebuildBlockedMessage,
   sanitizeSettingsPatch,
   structuralChanges,
@@ -89,13 +107,15 @@ export async function createTournament(input: CreateTournamentInput) {
   // Team mode: teams are the bracket entrants and are finalized in later, so an
   // event can start with zero players. Individual mode keeps the 2..128 rule.
   const isTeamMode = input.config?.entryMode === "team";
-  if (
-    !isTeamMode &&
-    (input.players.length < MIN_PLAYERS || input.players.length > MAX_PLAYERS)
-  ) {
+  // An open sign-up form fills the field later, so it may start empty too.
+  const fillsLater = isTeamMode || input.config?.signupEnabled === true;
+  if (!fillsLater && input.players.length < MIN_PLAYERS) {
     throw new Error(
       `Tournaments need between ${MIN_PLAYERS} and ${MAX_PLAYERS} players`,
     );
+  }
+  if (input.players.length > MAX_PLAYERS) {
+    throw new Error(`Maximum ${MAX_PLAYERS} players`);
   }
 
   const drawSeed = newSeed();
@@ -549,7 +569,15 @@ export interface SignupInput {
   mode: "solo" | "team";
   teamName?: string;
   /** For a team: [captain, ...teammates]. For solo: a single person. */
-  members: { name: string; email?: string; phone?: string }[];
+  members: {
+    name: string;
+    email?: string;
+    phone?: string;
+    /** Answers to person-scope questions. */
+    answers?: AnswerMap;
+  }[];
+  /** Answers to team-scope questions, given once by the captain. */
+  answers?: AnswerMap;
 }
 
 /**
@@ -565,6 +593,7 @@ export async function submitSignup(input: SignupInput) {
       name: m.name?.trim() ?? "",
       email: m.email?.trim() || null,
       phone: m.phone?.trim() || null,
+      answers: m.answers ?? {},
     }))
     .filter((m) => m.name);
   if (!clean.length) throw new Error("Please enter at least one name");
@@ -578,6 +607,10 @@ export async function submitSignup(input: SignupInput) {
     .eq("id", input.tournamentId)
     .single();
   const cfg = (config as { config: TournamentConfigJson } | null)?.config;
+  const form = normalizeSignupForm(cfg?.signupForm);
+
+  // The window closes on its own; RLS enforces this too.
+  if (formClosed(form)) throw new Error(FORM_CLOSED_MESSAGE);
 
   // Which paths this event accepts. RLS enforces the same rule; this is the
   // friendly error for someone whose form went stale mid-fill.
@@ -586,14 +619,25 @@ export async function submitSignup(input: SignupInput) {
     throw new Error(signupTypeBlockedMessage(signupMode));
   }
 
-  // Enforce the roster cap here too: the form caps its own inputs, but a team
-  // can also sign up across several submissions under the same name.
+  const size = resolveTeamSize(
+    { target_size: null, min_size: null, max_size: null },
+    cfg?.teamSize,
+  );
+
   if (input.mode === "team") {
     const teamName = input.teamName!.trim();
-    const size = resolveTeamSize(
-      { target_size: null, min_size: null, max_size: null },
-      cfg?.teamSize,
+
+    // Roster rules for this one submission: the max always applies, the min
+    // only when the organizer wants full teams up front.
+    const rosterProblem = rosterSizeError(
+      clean.length,
+      size,
+      form.requireMinRoster,
     );
+    if (rosterProblem) throw new Error(rosterProblem);
+
+    // Enforce the cap across submissions too: a team can also sign up in
+    // several goes under the same name.
     const { count } = await supabase
       .from("registrants")
       .select("id", { count: "exact", head: true })
@@ -604,17 +648,51 @@ export async function submitSignup(input: SignupInput) {
     if (problem) throw new Error(problem);
   }
 
-  const rows = clean.map((m, i) => ({
-    tournament_id: input.tournamentId,
-    name: m.name,
-    email: m.email,
-    phone: m.phone,
-    signup_type: input.mode,
-    is_captain: input.mode === "team" && i === 0,
-    proposed_team: input.mode === "team" ? input.teamName!.trim() : null,
-    status: "pending" as const,
-    source: "native" as const,
-  }));
+  // Built-in contact rules.
+  for (const [i, m] of clean.entries()) {
+    const problem = contactError(form, i, m);
+    if (problem) throw new Error(problem);
+  }
+
+  // Custom questions: team-scope answered once, person-scope per member.
+  const teamQuestions = questionsFor(form, "team");
+  const personQuestions = questionsFor(form, "person");
+  const teamAnswers = input.mode === "team" ? (input.answers ?? {}) : {};
+
+  if (input.mode === "team") {
+    const errors = validateAnswers(teamQuestions, teamAnswers);
+    if (errors.length) {
+      throw new Error(describeAnswerErrors(teamQuestions, errors));
+    }
+  }
+  for (const m of clean) {
+    const errors = validateAnswers(personQuestions, m.answers);
+    if (errors.length) {
+      throw new Error(describeAnswerErrors(personQuestions, errors));
+    }
+  }
+
+  const cleanTeamAnswers = sanitizeAnswers(teamQuestions, teamAnswers);
+
+  const rows = clean.map((m, i) => {
+    const isCaptain = input.mode === "team" && i === 0;
+    const personAnswers = sanitizeAnswers(personQuestions, m.answers);
+    return {
+      tournament_id: input.tournamentId,
+      name: m.name,
+      email: m.email,
+      phone: m.phone,
+      signup_type: input.mode,
+      is_captain: isCaptain,
+      proposed_team: input.mode === "team" ? input.teamName!.trim() : null,
+      status: "pending" as const,
+      source: "native" as const,
+      // Team answers ride on the captain's row: one submission, one set.
+      answers: isCaptain
+        ? { ...cleanTeamAnswers, ...personAnswers }
+        : personAnswers,
+    };
+  });
 
   const { error } = await supabase.from("registrants").insert(rows);
   if (error) {
@@ -857,6 +935,51 @@ export async function setTeamMode(
   if (patch.stationLabels !== undefined) {
     config.stationLabels = patch.stationLabels.map((s) => s.trim());
   }
+  const { error } = await supabase
+    .from("tournaments")
+    .update({ config })
+    .eq("id", tournament.id);
+  if (error) throw error;
+  reval(tournament);
+}
+
+/**
+ * Pick the sign-up style. Each style is a preset over entryMode /
+ * signupEnabled / signupMode, all of which stay individually editable after.
+ * Existing rosters and the bracket are untouched.
+ */
+export async function setSignupStyle(
+  tournamentId: string,
+  style: SignupStyle,
+) {
+  const { supabase, tournament } = await loadOwned(tournamentId);
+  const chosen = normalizeSignupStyle(style);
+  const preset = presetForStyle(chosen);
+  const config: TournamentConfigJson = {
+    ...(tournament.config ?? {}),
+    signupStyle: chosen,
+    entryMode: preset.entryMode,
+    signupEnabled: preset.signupEnabled,
+    signupMode: preset.signupMode,
+  };
+  const { error } = await supabase
+    .from("tournaments")
+    .update({ config })
+    .eq("id", tournament.id);
+  if (error) throw error;
+  reval(tournament);
+}
+
+/** Save the custom sign-up form. Normalized here so config can never hold junk. */
+export async function updateSignupForm(
+  tournamentId: string,
+  form: SignupFormConfig,
+) {
+  const { supabase, tournament } = await loadOwned(tournamentId);
+  const config: TournamentConfigJson = {
+    ...(tournament.config ?? {}),
+    signupForm: normalizeSignupForm(form),
+  };
   const { error } = await supabase
     .from("tournaments")
     .update({ config })
@@ -1196,12 +1319,32 @@ export async function deleteRegistrants(
 ) {
   const { supabase, tournament } = await loadOwned(tournamentId);
   if (!registrantIds.length) return;
+  // In individual style the person holds a bracket slot; remove it with them.
+  const { data: linked } = await supabase
+    .from("registrants")
+    .select("player_id")
+    .eq("tournament_id", tournament.id)
+    .in("id", registrantIds)
+    .not("player_id", "is", null);
+  const playerIds = ((linked ?? []) as { player_id: string | null }[])
+    .map((r) => r.player_id)
+    .filter((id): id is string => Boolean(id));
+
   const { error } = await supabase
     .from("registrants")
     .delete()
     .eq("tournament_id", tournament.id)
     .in("id", registrantIds);
   if (error) throw error;
+
+  if (playerIds.length) {
+    await supabase
+      .from("players")
+      .delete()
+      .eq("tournament_id", tournament.id)
+      .in("id", playerIds);
+    await recomputeAndPersist(supabase, tournament);
+  }
   reval(tournament);
 }
 
@@ -1252,8 +1395,67 @@ export async function autoFillTeams(tournamentId: string) {
   reval(tournament);
 }
 
+/**
+ * Individual sign-up style: the person *is* the entrant, so approving them
+ * creates their players row. Team mode links the bracket entrant on the team
+ * instead and leaves registrants.player_id null.
+ */
+async function createPlayerForRegistrant(
+  supabase: SupabaseClient,
+  tournament: TournamentRow,
+  registrant: RegistrantRow,
+): Promise<string | null> {
+  if (registrant.player_id) return registrant.player_id;
+  const name = registrant.name.trim();
+
+  const { data: existing } = await supabase
+    .from("players")
+    .select("id, name, position")
+    .eq("tournament_id", tournament.id);
+  const rows = (existing ?? []) as { id: string; name: string; position: number }[];
+  if (rows.length >= MAX_PLAYERS) throw new Error(`Maximum ${MAX_PLAYERS} players`);
+
+  // Someone already entered by hand under this name keeps their slot.
+  const match = rows.find(
+    (p) => p.name.trim().toLowerCase() === name.toLowerCase(),
+  );
+  if (match) return match.id;
+
+  const nextPosition = rows.reduce((m, p) => Math.max(m, p.position), -1) + 1;
+  const { data: player, error } = await supabase
+    .from("players")
+    .insert({
+      tournament_id: tournament.id,
+      name,
+      seed: null,
+      position: nextPosition,
+      withdrawn: false,
+    })
+    .select()
+    .single();
+  if (error) throw error;
+  return (player as PlayerRow).id;
+}
+
 export async function approveRegistrant(registrantId: string) {
   const { supabase, tournament, registrant } = await loadOwnedRegistrant(registrantId);
+
+  // Individual style: no teams involved, the person enters the bracket.
+  if ((tournament.config?.entryMode ?? "individual") !== "team") {
+    const playerId = await createPlayerForRegistrant(
+      supabase,
+      tournament,
+      registrant,
+    );
+    await supabase
+      .from("registrants")
+      .update({ status: "approved", player_id: playerId })
+      .eq("id", registrantId);
+    await recomputeAndPersist(supabase, tournament);
+    reval(tournament);
+    return;
+  }
+
   let teamId = registrant.team_id;
   // A full-team sign-up carries a proposed team name; materialize/attach a team.
   if (!teamId && registrant.signup_type === "team" && registrant.proposed_team) {

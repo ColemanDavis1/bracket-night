@@ -22,7 +22,8 @@ export type QuestionType =
   | "yes_no"
   | "number"
   | "email"
-  | "phone";
+  | "phone"
+  | "consent";
 
 export type QuestionScope = "team" | "person";
 
@@ -82,10 +83,16 @@ export const QUESTION_TYPE_LABELS: Record<QuestionType, string> = {
   number: "Number",
   email: "Email",
   phone: "Phone",
+  consent: "Agreement (must be accepted)",
 };
 
 export const YES = "Yes";
 export const NO = "No";
+/**
+ * The only acceptable answer to a consent question. Storing the word rather
+ * than a boolean keeps the exported spreadsheet readable.
+ */
+export const AGREED = "Agreed";
 
 export function defaultSignupForm(): SignupFormConfig {
   return {
@@ -136,7 +143,7 @@ function normalizeQuestion(raw: unknown, index: number): FormQuestion | null {
     label,
     help: typeof q.help === "string" && q.help.trim() ? q.help.trim() : undefined,
     type,
-    required: q.required === true,
+    required: type === "consent" ? true : q.required === true,
     scope: q.scope === "person" ? "person" : "team",
     ...(options ? { options } : {}),
     ...(showIf ? { showIf } : {}),
@@ -205,7 +212,16 @@ export function visibleQuestions(
   return questions.filter((q) => isQuestionVisible(q, answers));
 }
 
+/** A consent question is an agreement, so "required" means "must accept". */
+export function consentRequiredMessage(): string {
+  return "You must accept this to sign up.";
+}
+
 function valueError(q: FormQuestion, value: AnswerValue): string | null {
+  if (q.type === "consent") {
+    const s = Array.isArray(value) ? (value[0] ?? "") : value;
+    return s === AGREED ? null : consentRequiredMessage();
+  }
   if (q.type === "multi_choice") {
     const picked = Array.isArray(value) ? value : [value];
     const allowed = new Set(q.options ?? []);
@@ -245,7 +261,13 @@ export function validateAnswers(
     const value = answers[q.id];
     if (isBlank(value)) {
       if (q.required) {
-        errors.push({ questionId: q.id, message: "This question is required." });
+        errors.push({
+          questionId: q.id,
+          message:
+            q.type === "consent"
+              ? consentRequiredMessage()
+              : "This question is required.",
+        });
       }
       continue;
     }
@@ -363,7 +385,7 @@ export function newQuestion(
         : Math.random().toString(36).slice(2, 10),
     label: "",
     type,
-    required: false,
+    required: type === "consent",
     scope,
     ...(type === "choice" || type === "multi_choice"
       ? { options: ["Option 1"] }

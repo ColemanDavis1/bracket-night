@@ -10,6 +10,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  AGREED,
   NO,
   YES,
   visibleQuestions,
@@ -45,6 +46,35 @@ export function QuestionFields({
       {shown.map((q) => {
         const id = `${idPrefix}-${q.id}`;
         const value = answers[q.id];
+        if (q.type === "consent") {
+          return (
+            <div key={q.id} className="rounded-lg border border-border/70 p-3">
+              <label className="flex items-start gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={value === AGREED}
+                  disabled={disabled}
+                  onChange={(e) =>
+                    onChange(q.id, e.target.checked ? AGREED : "")
+                  }
+                />
+                <span>
+                  {q.label}
+                  <span className="ml-1 text-destructive" aria-hidden>
+                    *
+                  </span>
+                  {q.help ? (
+                    <span className="mt-0.5 block text-xs text-muted-foreground">
+                      {q.help}
+                    </span>
+                  ) : null}
+                </span>
+              </label>
+            </div>
+          );
+        }
+
         return (
           <div key={q.id}>
             <Label htmlFor={id}>

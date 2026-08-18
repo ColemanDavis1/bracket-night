@@ -33,9 +33,17 @@ link and QR code.
   - *Asked of every member* — repeated for each person on the roster.
 
 Question types: short answer, paragraph, multiple choice, checkboxes, yes/no,
-number, email, phone. Each can be required or optional, carry help text, and be
+number, email, phone, and **agreement**. Each can be required or optional, carry help text, and be
 shown conditionally — *only show when [question] is [answer]* — which is how
 follow-ups like "if yes, which ones?" work.
+
+An **agreement** question is the "you must accept this to take part" case — a
+waiver, a code of conduct, a mailing-list opt-in that participation depends on.
+It renders as a single checkbox beside its text and is always required: the form
+will not submit until it is ticked, and the export records it as `Agreed` against
+each person who accepted. Put it in *asked of every member* when each player must
+accept for themselves, or in *asked once per team* when the captain accepts on
+the roster's behalf.
 
 **Preview** renders the real form controls, not a mock-up. What you see is the
 component the public page uses.

@@ -34,9 +34,6 @@ export async function loadHub(slug: string): Promise<{
 
   const selfService = tournament.config?.selfServiceScoring === true;
   const teamMode = tournament.config?.entryMode === "team";
-  // Individual sign-up keeps an approval queue too, so registrants load
-  // whenever a public form is in play — not only in team mode.
-  const hasPeople = teamMode || tournament.config?.signupEnabled === true;
   const [
     { data: players },
     { data: results },
@@ -68,13 +65,13 @@ export async function loadHub(slug: string): Promise<{
           .eq("tournament_id", tournament.id)
           .order("position")
       : Promise.resolve({ data: [] as TeamRow[] }),
-    hasPeople
-      ? supabase
-          .from("registrants")
-          .select("*")
-          .eq("tournament_id", tournament.id)
-          .order("created_at")
-      : Promise.resolve({ data: [] as RegistrantRow[] }),
+    // Always: responses outlive the setting that collected them, and an event
+    // switched back to manual must still be able to export what it gathered.
+    supabase
+      .from("registrants")
+      .select("*")
+      .eq("tournament_id", tournament.id)
+      .order("created_at"),
     supabase
       .from("station_assignments")
       .select("*")

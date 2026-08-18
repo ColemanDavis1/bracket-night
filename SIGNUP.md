@@ -82,10 +82,18 @@ After the close time passes, the public form shuts itself. Add latecomers on the
   name. Move people with the per-row dropdown, the one-click *move to solo pool*
   button, or by ticking several and using the bulk bar. Trash icon removes
   someone entirely.
-- **Sign-ups tab → Export responses** — CSV, one row per person, opening
-  directly in Excel. Columns: team, role, name, email, phone, status, source,
+- **Sign-ups tab → Responses** — a table of everyone recorded, with their email,
+  phone, team, and status, visible without downloading anything.
+- **Export to Excel** — CSV, one row per person, opening directly in Excel. Columns: team, role, name, email, phone, status, source,
   checked in, then every team question, then every member question. Team answers
   repeat on each member's row so you can sort or filter by any column.
+
+### Collecting an email for everyone
+
+By default contact details are asked of **the captain only**, so a team of eight
+records one email. Set *Ask contact details of* to **Every member** in the builder
+if you need one per player. The Responses panel says how many of each you have, so
+this is visible before the event rather than at export time.
 
 ## Where the rules are enforced
 

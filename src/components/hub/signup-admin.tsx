@@ -18,7 +18,10 @@ import {
   usesCustomForm,
   type SignupStyle,
 } from "@/lib/signup/style";
-import { formClosed } from "@/lib/signup/form-schema";
+import {
+  formClosed,
+  type SignupFormConfig,
+} from "@/lib/signup/form-schema";
 import { signupResponsesCsv } from "@/lib/signup/export";
 import type { HubRegistrant, HubTeam, HubTournament } from "./types";
 
@@ -160,15 +163,7 @@ export function SignupAdmin({
               </div>
               <div className="flex flex-wrap gap-2">
                 <CopyButton label="Copy sign-up link" value={signupUrl} />
-                <Button size="sm" variant="outline" onClick={exportResponses}>
-                  <Download className="h-4 w-4" /> Export responses
-                </Button>
               </div>
-              <p className="text-xs text-muted-foreground">
-                {registrants.length} response
-                {registrants.length === 1 ? "" : "s"} so far. The export opens in
-                Excel, one row per person.
-              </p>
             </div>
           {tournament.signupEnabled && signupUrl ? (
             <QrCode value={signupUrl} size={120} caption="Scan to sign up" />
@@ -180,6 +175,14 @@ export function SignupAdmin({
           you like, then pick a style above to publish it.
         </p>
       )}
+
+      <ResponsesTable
+        registrants={registrants}
+        teams={teams}
+        form={tournament.signupForm}
+        teamMode={teamMode}
+        onExport={exportResponses}
+      />
 
       <SignupFormBuilder
         tournamentId={tournament.id}
@@ -233,6 +236,116 @@ export function SignupAdmin({
         </section>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * What has actually been collected, on screen rather than only in a download.
+ * The table shows the fixed fields; the export carries every custom answer too.
+ */
+function ResponsesTable({
+  registrants,
+  teams,
+  form,
+  teamMode,
+  onExport,
+}: {
+  registrants: HubRegistrant[];
+  teams: HubTeam[];
+  form: SignupFormConfig;
+  teamMode: boolean;
+  onExport: () => void;
+}) {
+  const teamName = new Map(teams.map((t) => [t.id, t.name]));
+  const withEmail = registrants.filter((r) => r.email?.trim()).length;
+  const withPhone = registrants.filter((r) => r.phone?.trim()).length;
+  // Captain-only contact details are a common surprise at export time.
+  const captainOnly = teamMode && form.contactScope === "captain";
+
+  return (
+    <section className="rounded-xl border border-border p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h3 className="text-sm font-bold uppercase tracking-widest text-muted-foreground">
+            Responses
+          </h3>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {registrants.length} recorded · {withEmail} with an email ·{" "}
+            {withPhone} with a phone. The export is a spreadsheet, one row per
+            person, including every custom answer.
+          </p>
+        </div>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={registrants.length === 0}
+          onClick={onExport}
+        >
+          <Download className="h-4 w-4" /> Export to Excel
+        </Button>
+      </div>
+
+      {captainOnly ? (
+        <p className="mt-3 rounded-md border border-broadcast-gold/40 bg-broadcast-gold/10 px-3 py-2 text-xs">
+          Contact details are only asked of the captain. To record an email for
+          every player, set <strong>Ask contact details of</strong> to{" "}
+          <strong>Every member</strong> below.
+        </p>
+      ) : null}
+
+      {registrants.length === 0 ? (
+        <p className="mt-3 text-sm text-muted-foreground">
+          Nothing yet. Responses appear here as people sign up.
+        </p>
+      ) : (
+        <div className="mt-3 overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
+                <th className="py-1.5 pr-3 font-semibold">Name</th>
+                <th className="py-1.5 pr-3 font-semibold">Email</th>
+                <th className="py-1.5 pr-3 font-semibold">Phone</th>
+                {teamMode ? (
+                  <th className="py-1.5 pr-3 font-semibold">Team</th>
+                ) : null}
+                <th className="py-1.5 font-semibold">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {registrants.map((r) => (
+                <tr key={r.id} className="border-b border-border/50">
+                  <td className="py-1.5 pr-3">
+                    {r.name}
+                    {r.isCaptain ? (
+                      <span className="ml-1 text-xs text-muted-foreground">
+                        (C)
+                      </span>
+                    ) : null}
+                  </td>
+                  <td className="py-1.5 pr-3 text-muted-foreground">
+                    {r.email ?? "—"}
+                  </td>
+                  <td className="py-1.5 pr-3 text-muted-foreground">
+                    {r.phone ?? "—"}
+                  </td>
+                  {teamMode ? (
+                    <td className="py-1.5 pr-3 text-muted-foreground">
+                      {(r.teamId ? teamName.get(r.teamId) : r.proposedTeam) ??
+                        "—"}
+                    </td>
+                  ) : null}
+                  <td className="py-1.5">
+                    <Badge variant={r.status === "approved" ? "default" : "muted"}>
+                      {r.status}
+                    </Badge>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
   );
 }
 

@@ -11,6 +11,7 @@
  */
 import type {
   AiTone,
+  StageConfig,
   MainFormat,
   PointsTiebreak,
   ScoringMode,
@@ -36,6 +37,8 @@ export interface SettingsPatch {
   seriesLength?: 1 | 3 | 5;
   selfServiceScoring?: boolean;
   notes?: string;
+  /** multi_stage pipeline. Compared by value, not reference. */
+  stages?: StageConfig[];
   /** Re-draw a random bracket. Always structural. */
   reshuffleDraw?: boolean;
 }
@@ -53,6 +56,7 @@ export const STRUCTURAL_FIELDS = [
   "advancePerGroup",
   "groupDoubleRoundRobin",
   "knockoutFormat",
+  "stages",
 ] as const;
 
 const FIELD_LABELS: Record<string, string> = {
@@ -64,6 +68,7 @@ const FIELD_LABELS: Record<string, string> = {
   advancePerGroup: "teams advancing per group",
   groupDoubleRoundRobin: "double group round robin",
   knockoutFormat: "knockout format",
+  stages: "the stage pipeline",
   reshuffleDraw: "the draw",
 };
 
@@ -76,7 +81,14 @@ export function structuralChanges(
   for (const field of STRUCTURAL_FIELDS) {
     const next = patch[field] as unknown;
     if (next === undefined) continue;
-    if (next !== (current[field] as unknown)) changed.push(field);
+    const now = current[field] as unknown;
+    // The pipeline is an array, so a reference compare would report every save
+    // as a rebuild. Compare by value.
+    const differs =
+      field === "stages"
+        ? JSON.stringify(next) !== JSON.stringify(now ?? null)
+        : next !== now;
+    if (differs) changed.push(field);
   }
   if (patch.reshuffleDraw) changed.push("reshuffleDraw");
   return changed;

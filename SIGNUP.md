@@ -115,6 +115,24 @@ teammate columns). Everything imported lands in the approval queue. Use it to
 carry over a roster you already collected elsewhere; new sign-ups should go
 through the form, which stores structured answers the import cannot.
 
+## Deciding details later
+
+Nothing has to be known before the form goes out. Send the link first, then set
+the rest on the **Settings** tab as it firms up — every setting is editable after
+creation:
+
+- **Format** — including switching to or from a multi-stage pipeline, and editing
+  the pipeline's stages in place.
+- **Courts & stations** — how many run at once, and what each is called (Court 1,
+  Table A, Back Yard). Safe to change mid-event.
+- **Team size** — min, target, and max, which also drives the form's
+  full-roster rule.
+- **Seeding, scoring, tiebreaker, match length**, house rules, event date, name.
+
+Format, seeding, and pipeline changes rebuild the schedule. Before anything is
+played that costs nothing; afterwards Settings asks you to confirm clearing the
+scores first, since a rebuild renumbers the matches.
+
 ## Sharing control of an event
 
 **Settings tab → Who can help run this** (owner only). Invite by email, pick a

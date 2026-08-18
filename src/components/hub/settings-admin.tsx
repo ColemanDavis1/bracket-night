@@ -34,7 +34,9 @@ import type {
   PointsTiebreak,
   ScoringMode,
   SeedingMethod,
+  StageConfig,
 } from "@/lib/engine";
+import { StagePipeline } from "@/components/wizard/stage-pipeline";
 import {
   rebuildBlockedMessage,
   structuralChanges,
@@ -49,6 +51,12 @@ import {
   updateTournamentSettings,
 } from "@/lib/actions/tournaments";
 import type { HubTournament } from "./types";
+
+/** Sensible starting pipeline when someone switches to multi-stage. */
+const DEFAULT_STAGES: StageConfig[] = [
+  { type: "group", numGroups: 4, advancePerGroup: 2, draw: "random" },
+  { type: "single_elim" },
+];
 
 /**
  * Organizer settings for a tournament that is already underway. Sign-ups
@@ -92,6 +100,7 @@ export function SettingsAdmin({
       seriesLength: tournament.seriesLength,
       selfServiceScoring: tournament.selfServiceScoring,
       notes: tournament.notes ?? undefined,
+      stages: tournament.stages ?? undefined,
     }),
     [tournament],
   );
@@ -100,6 +109,7 @@ export function SettingsAdmin({
   const [reshuffle, setReshuffle] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
   const [size, setSize] = useState(tournament.teamSize ?? DEFAULT_TEAM_SIZE);
+  const [labels, setLabels] = useState<string[]>(tournament.stationLabels);
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -125,20 +135,34 @@ export function SettingsAdmin({
     if (p.seedingMethod === "seeding_rounds") {
       p.seedingRounds = draft.seedingRounds ?? 2;
     }
+    if (p.format === "multi_stage" && !p.stages?.length) {
+      p.stages = DEFAULT_STAGES;
+    }
     return p;
   }, [draft, reshuffle]);
   const structural = structuralChanges(current, patch);
+  const courtCount = draft.numStations ?? 1;
+  const courtNames = Array.from(
+    { length: courtCount },
+    (_, i) => labels[i] ?? "",
+  );
+  const labelsChanged =
+    courtNames.length !== tournament.stationLabels.length ||
+    courtNames.some((n, i) => n !== (tournament.stationLabels[i] ?? ""));
   const sizeChanged =
     !tournament.teamSize ||
     size.target !== tournament.teamSize.target ||
     size.min !== tournament.teamSize.min ||
     size.max !== tournament.teamSize.max;
+  const stagesChanged =
+    JSON.stringify(draft.stages ?? null) !== JSON.stringify(current.stages ?? null);
   const settingsChanged =
     reshuffle ||
+    stagesChanged ||
     (Object.keys(current) as (keyof SettingsSnapshot)[]).some(
-      (k) => draft[k] !== current[k],
+      (k) => k !== "stages" && draft[k] !== current[k],
     );
-  const dirty = settingsChanged || (teamMode && sizeChanged);
+  const dirty = settingsChanged || labelsChanged || (teamMode && sizeChanged);
 
   // A rebuild renumbers matches, so anything already scored would be orphaned.
   const needsConfirm =
@@ -158,6 +182,9 @@ export function SettingsAdmin({
         if (teamMode && sizeChanged) {
           await setTeamMode(tournament.id, { teamSize: normalizeTeamSize(size) });
         }
+        if (labelsChanged) {
+          await setTeamMode(tournament.id, { stationLabels: courtNames });
+        }
         setReshuffle(false);
         setConfirmClear(false);
         setSaved(true);
@@ -170,6 +197,7 @@ export function SettingsAdmin({
   function reset() {
     setDraft(current);
     setSize(tournament.teamSize ?? DEFAULT_TEAM_SIZE);
+    setLabels(tournament.stationLabels);
     setReshuffle(false);
     setConfirmClear(false);
     setError(null);
@@ -181,11 +209,9 @@ export function SettingsAdmin({
     results: playedCount,
   });
 
-  const formats = (Object.keys(FORMAT_LABELS) as MainFormat[]).filter(
-    // The multi-stage pipeline is built in the wizard; don't offer it as a
-    // switch target here, but keep it selectable if it's already in use.
-    (f) => f !== "multi_stage" || tournament.format === "multi_stage",
-  );
+  // Every format is switchable, multi-stage included: its pipeline is editable
+  // right here now.
+  const formats = Object.keys(FORMAT_LABELS) as MainFormat[];
 
   return (
     <div className="space-y-6">
@@ -395,6 +421,16 @@ export function SettingsAdmin({
           </div>
         ) : null}
 
+        {draft.format === "multi_stage" ? (
+          <div className="mt-4">
+            <StagePipeline
+              entrants={entrantCount}
+              stages={draft.stages?.length ? draft.stages : DEFAULT_STAGES}
+              onChange={(stages: StageConfig[]) => set("stages", stages)}
+            />
+          </div>
+        ) : null}
+
         <div className="mt-4">
           <Button
             type="button"
@@ -447,23 +483,6 @@ export function SettingsAdmin({
               </SelectContent>
             </Select>
           </Field>
-          <Field label="Parallel stations">
-            <Select
-              value={String(draft.numStations ?? 1)}
-              onValueChange={(v) => set("numStations", Number(v))}
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {Array.from({ length: 8 }, (_, i) => i + 1).map((n) => (
-                  <SelectItem key={n} value={String(n)}>
-                    {n === 1 ? "1 (sequential)" : `${n} stations`}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </Field>
           <Field label="Match length">
             <Select
               value={String(draft.seriesLength ?? 1)}
@@ -486,6 +505,54 @@ export function SettingsAdmin({
           onChange={(v) => set("selfServiceScoring", v)}
           label="Let players submit scores for my approval"
         />
+      </Section>
+
+      <Section
+        title="Courts & stations"
+        desc="How many matches can run at once, and what to call each one. Safe to change mid-event."
+      >
+        <Field label="How many courts?" className="max-w-xs">
+          <Select
+            value={String(courtCount)}
+            onValueChange={(v) => set("numStations", Number(v))}
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {Array.from({ length: 8 }, (_, i) => i + 1).map((n) => (
+                <SelectItem key={n} value={String(n)}>
+                  {n === 1 ? "1 (one match at a time)" : `${n} courts`}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </Field>
+
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {courtNames.map((name, i) => (
+            <Field key={i} label={`Court ${i + 1} name`}>
+              <Input
+                value={name}
+                placeholder={`Court ${i + 1}`}
+                onChange={(e) => {
+                  setSaved(false);
+                  setLabels((prev) => {
+                    const next = [...prev];
+                    while (next.length < courtCount) next.push("");
+                    next[i] = e.target.value;
+                    return next;
+                  });
+                }}
+              />
+            </Field>
+          ))}
+        </div>
+        <p className="mt-2 text-xs text-muted-foreground">
+          Leave a name blank to fall back to &ldquo;Court {courtCount}&rdquo;.
+          Names show on the call board and the TV view — use whatever the room
+          actually calls them (Table A, Back Yard, Gym 2).
+        </p>
       </Section>
 
       {teamMode ? (

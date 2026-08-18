@@ -1082,6 +1082,7 @@ function settingsSnapshot(t: TournamentRow): SettingsSnapshot {
     seriesLength: c.seriesLength,
     selfServiceScoring: c.selfServiceScoring,
     notes: c.notes,
+    stages: c.stages,
   };
 }
 
@@ -1149,6 +1150,9 @@ export async function updateTournamentSettings(
     config.selfServiceScoring = clean.selfServiceScoring;
   }
   if (clean.notes !== undefined) config.notes = clean.notes.trim() || undefined;
+  if (clean.stages !== undefined) {
+    config.stages = clean.stages.length ? clean.stages : undefined;
+  }
 
   // Manual draws are expressed as player ids against the old shape — drop them
   // when the shape they were built for no longer applies.

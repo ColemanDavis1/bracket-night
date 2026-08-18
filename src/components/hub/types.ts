@@ -9,6 +9,7 @@ import type {
 import type { SignupMode } from "@/lib/teams/signup-mode";
 import type { AnswerMap, SignupFormConfig } from "@/lib/signup/form-schema";
 import type { SignupStyle } from "@/lib/signup/style";
+import type { AdminRole } from "@/lib/access/roles";
 
 export interface HubTournament {
   id: string;
@@ -105,6 +106,14 @@ export interface HubRegistrant {
   playerId: string | null;
 }
 
+/** Someone the owner invited to help run the event. */
+export interface HubAdmin {
+  id: string;
+  email: string;
+  role: AdminRole;
+  acceptedAt: string | null;
+}
+
 /** Live per-match court/station state. */
 export interface HubStation {
   matchKey: string;
@@ -119,6 +128,12 @@ export interface HubData {
   state: EngineState;
   prevRanking: string[];
   isOrganizer: boolean;
+  /** The viewer's role: owner, an invited role, or null for the public. */
+  viewerRole: AdminRole | null;
+  /** Invited helpers. Only populated for the owner (RLS hides other rows). */
+  admins: HubAdmin[];
+  /** The owner's email, shown in the access list. */
+  ownerEmail: string | null;
   /** Pending self-service submissions (empty unless the feature is on). */
   pending: HubPending[];
   /** Team Builder roster (empty in individual mode). */

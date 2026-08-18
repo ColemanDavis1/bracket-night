@@ -114,3 +114,23 @@ spreadsheet with a name column (plus optional email, phone, team name, and
 teammate columns). Everything imported lands in the approval queue. Use it to
 carry over a roster you already collected elsewhere; new sign-ups should go
 through the form, which stores structured answers the import cannot.
+
+## Sharing control of an event
+
+**Settings tab → Who can help run this** (owner only). Invite by email, pick a
+role, then send them the manage link — the invite activates the moment they sign
+in with that address, so they don't need an account first. Shared events also
+appear on their dashboard under *Shared with you*.
+
+| Role | Can | Cannot |
+|---|---|---|
+| **Owner** | Everything, including access and deletion | — |
+| **Co-organizer** | The form, sign-ups, rosters, settings, scores | Delete the event, change access |
+| **Sign-ups & rosters** | Send and edit the form, approve sign-ups, build rosters | Enter scores, change settings |
+| **Scorekeeper** | Enter scores, run the call board | Change the form, rosters, or settings |
+
+Each role only sees the tabs it can use. Enforcement is layered: capability checks
+guard every server action, and RLS (migration 0012) independently keeps deletion
+and access changes with the owner and settings with the owner or a co-organizer.
+
+Invites are not emailed — send the manage link yourself.

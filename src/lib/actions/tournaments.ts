@@ -71,6 +71,14 @@ import {
   type StationMatch,
 } from "@/lib/stations/assign";
 import type { ParsedRegistrant } from "@/lib/import-registrants";
+import {
+  can,
+  deniedMessage,
+  isAdminRole,
+  normalizeEmail,
+  type AdminRole,
+  type Capability,
+} from "@/lib/access/roles";
 
 export interface CreateTournamentInput {
   name: string;
@@ -214,7 +222,53 @@ export async function createTournament(input: CreateTournamentInput) {
 }
 
 /** Load a tournament + children for a write action and assert ownership. */
-async function loadOwned(tournamentId: string) {
+/**
+ * The caller's role on an event: owner, an invited role, or null. Mirrors
+ * public.tournament_role() in migration 0012 — RLS enforces the coarse split
+ * independently, and these checks enforce the per-capability one.
+ */
+async function roleOn(
+  supabase: SupabaseClient,
+  tournament: TournamentRow,
+  user: { id: string; email?: string | null },
+): Promise<AdminRole | null> {
+  if (tournament.organizer_id === user.id) return "owner";
+  const email = user.email ? normalizeEmail(user.email) : null;
+  const { data } = await supabase
+    .from("tournament_admins")
+    .select("id, role, user_id, email, accepted_at")
+    .eq("tournament_id", tournament.id);
+  const rows = (data ?? []) as {
+    id: string;
+    role: string;
+    user_id: string | null;
+    email: string;
+    accepted_at: string | null;
+  }[];
+  const mine = rows.find(
+    (r) => r.user_id === user.id || (email && normalizeEmail(r.email) === email),
+  );
+  if (!mine || !isAdminRole(mine.role) || mine.role === "owner") return null;
+
+  // Link the invite to the account on first use, so it survives an email change.
+  if (!mine.user_id || !mine.accepted_at) {
+    await supabase
+      .from("tournament_admins")
+      .update({ user_id: user.id, accepted_at: new Date().toISOString() })
+      .eq("id", mine.id);
+  }
+  return mine.role;
+}
+
+/**
+ * Load a tournament for a write and assert the caller holds `capability`.
+ * Defaults to edit_settings, the owner/co-organizer level — narrower roles must
+ * be named explicitly by the actions they are allowed to perform.
+ */
+async function loadOwned(
+  tournamentId: string,
+  capability: Capability = "edit_settings",
+) {
   const { supabase, user } = await requireUser();
   const { data: t } = await supabase
     .from("tournaments")
@@ -222,10 +276,10 @@ async function loadOwned(tournamentId: string) {
     .eq("id", tournamentId)
     .single();
   if (!t) throw new Error("Tournament not found");
-  if ((t as TournamentRow).organizer_id !== user.id) {
-    throw new Error("Not authorized");
-  }
-  return { supabase, tournament: t as TournamentRow };
+  const tournament = t as TournamentRow;
+  const role = await roleOn(supabase, tournament, user);
+  if (!can(role, capability)) throw new Error(deniedMessage(role, capability));
+  return { supabase, tournament, role };
 }
 
 /** Recompute power-ranking snapshot + completion status after a change. */
@@ -266,7 +320,7 @@ export interface EnterResultInput {
 }
 
 export async function enterResult(input: EnterResultInput) {
-  const { supabase, tournament } = await loadOwned(input.tournamentId);
+  const { supabase, tournament } = await loadOwned(input.tournamentId, "enter_scores");
 
   const { error } = await supabase.from("match_results").upsert(
     {
@@ -291,7 +345,7 @@ export async function enterResult(input: EnterResultInput) {
 }
 
 export async function deleteResult(tournamentId: string, matchKey: string) {
-  const { supabase, tournament } = await loadOwned(tournamentId);
+  const { supabase, tournament } = await loadOwned(tournamentId, "enter_scores");
   const { error } = await supabase
     .from("match_results")
     .delete()
@@ -308,7 +362,7 @@ export async function setPlayerWithdrawn(
   playerId: string,
   withdrawn: boolean,
 ) {
-  const { supabase, tournament } = await loadOwned(tournamentId);
+  const { supabase, tournament } = await loadOwned(tournamentId, "manage_roster");
   const { error } = await supabase
     .from("players")
     .update({ withdrawn })
@@ -332,7 +386,7 @@ export async function setPlayerWithdrawn(
  *    that a manual bracket adjustment may be needed.
  */
 export async function addPlayer(tournamentId: string, name: string) {
-  const { supabase, tournament } = await loadOwned(tournamentId);
+  const { supabase, tournament } = await loadOwned(tournamentId, "manage_roster");
   const trimmed = name.trim();
   if (!trimmed) throw new Error("Player name is required");
   if (tournament.status === "complete") {
@@ -368,7 +422,7 @@ export async function addPlayer(tournamentId: string, name: string) {
 }
 
 export async function deleteTournament(tournamentId: string) {
-  const { supabase, tournament } = await loadOwned(tournamentId);
+  const { supabase, tournament } = await loadOwned(tournamentId, "delete_event");
   const { error } = await supabase
     .from("tournaments")
     .delete()
@@ -380,7 +434,7 @@ export async function deleteTournament(tournamentId: string) {
 
 /** Soft-delete: hide a tournament's public hub but keep all data. */
 export async function archiveTournament(tournamentId: string) {
-  const { supabase, tournament } = await loadOwned(tournamentId);
+  const { supabase, tournament } = await loadOwned(tournamentId, "delete_event");
   const { error } = await supabase
     .from("tournaments")
     .update({ archived_at: new Date().toISOString() })
@@ -392,7 +446,7 @@ export async function archiveTournament(tournamentId: string) {
 
 /** Restore an archived tournament to the active list and public hub. */
 export async function unarchiveTournament(tournamentId: string) {
-  const { supabase, tournament } = await loadOwned(tournamentId);
+  const { supabase, tournament } = await loadOwned(tournamentId, "delete_event");
   const { error } = await supabase
     .from("tournaments")
     .update({ archived_at: null })
@@ -734,7 +788,10 @@ export async function approvePendingResult(pendingId: string) {
     .single();
   if (!t) throw new Error("Tournament not found");
   const tournament = t as TournamentRow;
-  if (tournament.organizer_id !== user.id) throw new Error("Not authorized");
+  const role = await roleOn(supabase, tournament, user);
+  if (!can(role, "enter_scores")) {
+    throw new Error(deniedMessage(role, "enter_scores"));
+  }
 
   const { error: upErr } = await supabase.from("match_results").upsert(
     {
@@ -807,7 +864,10 @@ interface TeamSizesInput {
 }
 
 /** Load a team and assert the caller owns its tournament. */
-async function loadOwnedTeam(teamId: string) {
+async function loadOwnedTeam(
+  teamId: string,
+  capability: Capability = "manage_roster",
+) {
   const { supabase, user } = await requireUser();
   const { data: team } = await supabase
     .from("teams")
@@ -823,12 +883,16 @@ async function loadOwnedTeam(teamId: string) {
     .single();
   if (!tour) throw new Error("Tournament not found");
   const tournament = tour as TournamentRow;
-  if (tournament.organizer_id !== user.id) throw new Error("Not authorized");
+  const role = await roleOn(supabase, tournament, user);
+  if (!can(role, capability)) throw new Error(deniedMessage(role, capability));
   return { supabase, tournament, team: t };
 }
 
 /** Load a registrant and assert the caller owns its tournament. */
-async function loadOwnedRegistrant(registrantId: string) {
+async function loadOwnedRegistrant(
+  registrantId: string,
+  capability: Capability = "manage_roster",
+) {
   const { supabase, user } = await requireUser();
   const { data: reg } = await supabase
     .from("registrants")
@@ -844,7 +908,8 @@ async function loadOwnedRegistrant(registrantId: string) {
     .single();
   if (!tour) throw new Error("Tournament not found");
   const tournament = tour as TournamentRow;
-  if (tournament.organizer_id !== user.id) throw new Error("Not authorized");
+  const role = await roleOn(supabase, tournament, user);
+  if (!can(role, capability)) throw new Error(deniedMessage(role, capability));
   return { supabase, tournament, registrant: r };
 }
 
@@ -919,7 +984,14 @@ export async function setTeamMode(
     stationLabels?: string[];
   },
 ) {
-  const { supabase, tournament } = await loadOwned(tournamentId);
+  const structural =
+    patch.entryMode !== undefined ||
+    patch.teamSize !== undefined ||
+    patch.stationLabels !== undefined;
+  const { supabase, tournament } = await loadOwned(
+    tournamentId,
+    structural ? "edit_settings" : "manage_form",
+  );
   const config: TournamentConfigJson = { ...(tournament.config ?? {}) };
   if (patch.entryMode !== undefined) config.entryMode = patch.entryMode;
   if (patch.teamSize !== undefined) {
@@ -975,7 +1047,7 @@ export async function updateSignupForm(
   tournamentId: string,
   form: SignupFormConfig,
 ) {
-  const { supabase, tournament } = await loadOwned(tournamentId);
+  const { supabase, tournament } = await loadOwned(tournamentId, "manage_form");
   const config: TournamentConfigJson = {
     ...(tournament.config ?? {}),
     signupForm: normalizeSignupForm(form),
@@ -1111,7 +1183,7 @@ export async function createTeam(
   tournamentId: string,
   input: { name: string; sizes?: TeamSizesInput },
 ) {
-  const { supabase, tournament } = await loadOwned(tournamentId);
+  const { supabase, tournament } = await loadOwned(tournamentId, "manage_roster");
   const name = input.name?.trim();
   if (!name) throw new Error("Team name is required");
   const state = await engineStateFor(supabase, tournament);
@@ -1143,7 +1215,10 @@ export async function updateTeam(
   teamId: string,
   patch: { name?: string; sizes?: TeamSizesInput; locked?: boolean },
 ) {
-  const { supabase, tournament, team } = await loadOwnedTeam(teamId);
+  const { supabase, tournament, team } = await loadOwnedTeam(
+    teamId,
+    "manage_roster",
+  );
   const upd: Record<string, unknown> = {};
   if (patch.name !== undefined) {
     const n = patch.name.trim();
@@ -1233,7 +1308,7 @@ export async function addRegistrant(
     isCaptain?: boolean;
   },
 ) {
-  const { supabase, tournament } = await loadOwned(tournamentId);
+  const { supabase, tournament } = await loadOwned(tournamentId, "manage_roster");
   const name = input.name?.trim();
   if (!name) throw new Error("Name is required");
   if (input.teamId) {
@@ -1280,7 +1355,7 @@ export async function moveRegistrants(
   registrantIds: string[],
   teamId: string | null,
 ) {
-  const { supabase, tournament } = await loadOwned(tournamentId);
+  const { supabase, tournament } = await loadOwned(tournamentId, "manage_roster");
   if (!registrantIds.length) return;
 
   if (teamId) {
@@ -1317,7 +1392,7 @@ export async function deleteRegistrants(
   tournamentId: string,
   registrantIds: string[],
 ) {
-  const { supabase, tournament } = await loadOwned(tournamentId);
+  const { supabase, tournament } = await loadOwned(tournamentId, "manage_roster");
   if (!registrantIds.length) return;
   // In individual style the person holds a bracket slot; remove it with them.
   const { data: linked } = await supabase
@@ -1350,7 +1425,7 @@ export async function deleteRegistrants(
 
 /** Balance the approved solo pool across teams toward their target sizes. */
 export async function autoFillTeams(tournamentId: string) {
-  const { supabase, tournament } = await loadOwned(tournamentId);
+  const { supabase, tournament } = await loadOwned(tournamentId, "manage_roster");
   const [{ data: teams }, { data: regs }] = await Promise.all([
     supabase
       .from("teams")
@@ -1510,7 +1585,7 @@ export async function importRegistrantsCsv(
   tournamentId: string,
   rows: ParsedRegistrant[],
 ) {
-  const { supabase, tournament } = await loadOwned(tournamentId);
+  const { supabase, tournament } = await loadOwned(tournamentId, "manage_signups");
   if (!rows.length) return;
   const insertRows = rows
     .filter((r) => r.name?.trim())
@@ -1727,7 +1802,7 @@ export async function recordNoShow(
   tournamentId: string,
   input: { matchKey: string; noShowSide: "a" | "b" | "both" },
 ) {
-  const { supabase, tournament } = await loadOwned(tournamentId);
+  const { supabase, tournament } = await loadOwned(tournamentId, "enter_scores");
   const state = await engineStateFor(supabase, tournament);
   const match = state.matches.find((m) => m.key === input.matchKey);
   if (!match) throw new Error("Match not found");
@@ -1763,7 +1838,7 @@ export async function recordNoShow(
 
 /** Round-1 cleanup: forfeit every ready match whose team hasn't checked in. */
 export async function markUncheckedAsNoShow(tournamentId: string) {
-  const { supabase, tournament } = await loadOwned(tournamentId);
+  const { supabase, tournament } = await loadOwned(tournamentId, "enter_scores");
   const [{ data: teams }, state] = await Promise.all([
     supabase.from("teams").select("*").eq("tournament_id", tournament.id),
     engineStateFor(supabase, tournament),
@@ -1811,7 +1886,7 @@ export async function assignMatchToStation(
   tournamentId: string,
   input: { matchKey: string; station: number | null },
 ) {
-  const { supabase, tournament } = await loadOwned(tournamentId);
+  const { supabase, tournament } = await loadOwned(tournamentId, "manage_courts");
   await supabase.from("station_assignments").upsert(
     {
       tournament_id: tournament.id,
@@ -1829,7 +1904,7 @@ export async function setMatchState(
   tournamentId: string,
   input: { matchKey: string; state: "queued" | "playing" | "done" },
 ) {
-  const { supabase, tournament } = await loadOwned(tournamentId);
+  const { supabase, tournament } = await loadOwned(tournamentId, "manage_courts");
   await supabase.from("station_assignments").upsert(
     {
       tournament_id: tournament.id,
@@ -1847,7 +1922,7 @@ export async function callMatchToStation(
   tournamentId: string,
   input: { matchKey: string; station: number },
 ) {
-  const { supabase, tournament } = await loadOwned(tournamentId);
+  const { supabase, tournament } = await loadOwned(tournamentId, "manage_courts");
   await supabase.from("station_assignments").upsert(
     {
       tournament_id: tournament.id,
@@ -1863,7 +1938,7 @@ export async function callMatchToStation(
 
 /** Fill every open court from the ready-match queue. */
 export async function autoAssignStations(tournamentId: string) {
-  const { supabase, tournament } = await loadOwned(tournamentId);
+  const { supabase, tournament } = await loadOwned(tournamentId, "manage_courts");
   const numStations = Math.min(
     8,
     Math.max(1, tournament.config?.numStations ?? 1),
@@ -1898,6 +1973,70 @@ export async function autoAssignStations(tournamentId: string) {
       { onConflict: "tournament_id,match_key" },
     );
   }
+  reval(tournament);
+}
+
+// ===========================================================================
+// Shared access (co-organizers)
+// ===========================================================================
+
+/**
+ * Invite someone to help run this event. Keyed by email because they may not
+ * have an account yet; the invite activates the moment they sign in with that
+ * address and open the event. Owner only, enforced here and by RLS.
+ */
+export async function inviteAdmin(
+  tournamentId: string,
+  input: { email: string; role: AdminRole },
+) {
+  const { supabase, tournament } = await loadOwned(tournamentId, "manage_admins");
+  const email = normalizeEmail(input.email);
+  if (!email) throw new Error("Enter an email address.");
+  if (!isAdminRole(input.role) || input.role === "owner") {
+    throw new Error("Pick a role for this person.");
+  }
+
+  const { error } = await supabase.from("tournament_admins").insert({
+    tournament_id: tournament.id,
+    email,
+    role: input.role,
+    invited_by: tournament.organizer_id,
+  });
+  if (error) {
+    if (error.code === "23505") throw new Error("That person already has access.");
+    throw error;
+  }
+  reval(tournament);
+}
+
+/** Change what an existing admin can do. Owner only. */
+export async function setAdminRole(
+  tournamentId: string,
+  adminId: string,
+  role: AdminRole,
+) {
+  const { supabase, tournament } = await loadOwned(tournamentId, "manage_admins");
+  if (!isAdminRole(role) || role === "owner") {
+    throw new Error("Pick a role for this person.");
+  }
+  const { error } = await supabase
+    .from("tournament_admins")
+    .update({ role })
+    .eq("id", adminId)
+    .eq("tournament_id", tournament.id);
+  if (error) throw error;
+  reval(tournament);
+}
+
+/** Revoke access. Owner only. */
+export async function removeAdmin(tournamentId: string, adminId: string) {
+  const { supabase, tournament } = await loadOwned(tournamentId, "manage_admins");
+  const { error } = await supabase
+    .from("tournament_admins")
+    .delete()
+    .eq("id", adminId)
+    .eq("tournament_id", tournament.id);
+  if (error) throw error;
   reval(tournament);
 }
 

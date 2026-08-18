@@ -28,15 +28,24 @@ import { TeamsAdmin } from "./teams-admin";
 import { StationsAdmin } from "./stations-admin";
 import { SettingsAdmin } from "./settings-admin";
 import { SignupAdmin } from "./signup-admin";
+import { AccessAdmin } from "./access-admin";
 import { canAddEntrant, TEAMS_LOCKED_MESSAGE } from "@/lib/teams/gate";
+import { can } from "@/lib/access/roles";
 
 export function Hub({ data }: { data: HubData }) {
   const { tournament, players, state, prevRanking, isOrganizer, pending } = data;
-  const showPending = isOrganizer && tournament.selfServiceScoring;
+  const role = data.viewerRole;
+  // Each tab is gated on the capability it needs, so an invited scorekeeper
+  // sees the scoring surfaces and nothing else.
+  const canScore = can(role, "enter_scores");
+  const canRoster = can(role, "manage_roster");
+  const canForm = can(role, "manage_signups") || can(role, "manage_form");
+  const canSettings = can(role, "edit_settings");
+  const showPending = canScore && tournament.selfServiceScoring;
   const teamMode = tournament.entryMode === "team";
-  const showTeams = isOrganizer && teamMode;
+  const showTeams = canRoster && teamMode;
   const showStations =
-    isOrganizer && (tournament.numStations > 1 || teamMode);
+    can(role, "manage_courts") && (tournament.numStations > 1 || teamMode);
   const pendingSignups = data.registrants.filter(
     (r) => r.status === "pending",
   ).length;
@@ -132,7 +141,7 @@ export function Hub({ data }: { data: HubData }) {
             <TabsTrigger value="power">Power Rankings</TabsTrigger>
             <TabsTrigger value="previews">Previews</TabsTrigger>
             <TabsTrigger value="awards">Stats & Awards</TabsTrigger>
-            {isOrganizer ? (
+            {canForm ? (
               <TabsTrigger value="signups">
                 Sign-ups
                 {!teamMode && pendingSignups > 0 ? (
@@ -151,7 +160,7 @@ export function Hub({ data }: { data: HubData }) {
             {showStations ? (
               <TabsTrigger value="courts">Courts</TabsTrigger>
             ) : null}
-            {isOrganizer && !teamMode ? (
+            {canRoster && !teamMode ? (
               <TabsTrigger value="players">Players</TabsTrigger>
             ) : null}
             {showPending ? (
@@ -162,7 +171,7 @@ export function Hub({ data }: { data: HubData }) {
                 ) : null}
               </TabsTrigger>
             ) : null}
-            {isOrganizer ? (
+            {canSettings ? (
               <TabsTrigger value="settings">Settings</TabsTrigger>
             ) : null}
           </TabsList>
@@ -172,7 +181,7 @@ export function Hub({ data }: { data: HubData }) {
               tournament={tournament}
               state={state}
               names={names}
-              isOrganizer={isOrganizer}
+              isOrganizer={canScore}
               pendingKeys={pending.map((p) => p.matchKey)}
             />
           </TabsContent>
@@ -193,7 +202,7 @@ export function Hub({ data }: { data: HubData }) {
               names={names}
               scoringMode={tournament.scoringMode}
               tournamentId={tournament.id}
-              isOrganizer={isOrganizer}
+              isOrganizer={canScore}
               seriesLength={tournament.seriesLength}
             />
           </TabsContent>
@@ -229,7 +238,7 @@ export function Hub({ data }: { data: HubData }) {
             <Awards state={state} names={names} />
           </TabsContent>
 
-          {isOrganizer ? (
+          {canForm ? (
             <TabsContent value="signups">
               <SignupAdmin
                 tournament={tournament}
@@ -273,7 +282,7 @@ export function Hub({ data }: { data: HubData }) {
             </TabsContent>
           ) : null}
 
-          {isOrganizer && !teamMode ? (
+          {canRoster && !teamMode ? (
             <TabsContent value="players">
               <PlayersAdmin tournamentId={tournament.id} players={players} />
             </TabsContent>
@@ -290,7 +299,7 @@ export function Hub({ data }: { data: HubData }) {
             </TabsContent>
           ) : null}
 
-          {isOrganizer ? (
+          {canSettings ? (
             <TabsContent value="settings">
               <SettingsAdmin
                 tournament={tournament}
@@ -306,6 +315,16 @@ export function Hub({ data }: { data: HubData }) {
                   data.teams.filter((t) => t.playerId != null).length
                 }
               />
+              {can(role, "manage_admins") ? (
+                <div className="mt-6">
+                  <AccessAdmin
+                    tournamentId={tournament.id}
+                    slug={tournament.slug}
+                    admins={data.admins}
+                    ownerEmail={data.ownerEmail}
+                  />
+                </div>
+              ) : null}
             </TabsContent>
           ) : null}
         </Tabs>

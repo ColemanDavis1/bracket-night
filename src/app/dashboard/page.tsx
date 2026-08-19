@@ -12,6 +12,7 @@ import {
 } from "@/components/dashboard/tournament-card";
 import { BulkDeletePast } from "@/components/dashboard/bulk-delete-past";
 import { isAdminRole, ROLE_LABELS } from "@/lib/access/roles";
+import { listSharedRoles } from "@/lib/access/lookup";
 
 export const dynamic = "force-dynamic";
 
@@ -28,16 +29,12 @@ export default async function DashboardPage() {
     .eq("organizer_id", user.id)
     .order("created_at", { ascending: false });
 
-  // Events someone else invited me to help run. RLS returns only my own rows.
-  const { data: myAdminRows } = await supabase
-    .from("tournament_admins")
-    .select("tournament_id, role");
-  const sharedRoles = new Map(
-    ((myAdminRows ?? []) as { tournament_id: string; role: string }[]).map((a) => [
-      a.tournament_id,
-      a.role,
-    ]),
-  );
+  // Events someone else invited me to help run. Resolved server-side so it does
+  // not depend on the access token carrying an email claim.
+  const sharedRoles = await listSharedRoles({
+    id: user.id,
+    email: user.email,
+  });
   const { data: sharedTournaments } = sharedRoles.size
     ? await supabase
         .from("tournaments")

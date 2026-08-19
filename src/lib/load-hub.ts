@@ -9,7 +9,8 @@ import {
   type TournamentRow,
 } from "@/lib/db";
 import { normalizeSignupMode } from "@/lib/teams/signup-mode";
-import { isAdminRole, normalizeEmail, type AdminRole } from "@/lib/access/roles";
+import type { AdminRole } from "@/lib/access/roles";
+import { listAdmins, resolveRole } from "@/lib/access/lookup";
 import { normalizeSignupForm } from "@/lib/signup/form-schema";
 import { inferSignupStyle, normalizeSignupStyle } from "@/lib/signup/style";
 import type { HubData } from "@/components/hub/types";
@@ -43,7 +44,6 @@ export async function loadHub(slug: string): Promise<{
     { data: teams },
     { data: registrants },
     { data: stations },
-    { data: adminRows },
   ] = await Promise.all([
     supabase
       .from("players")
@@ -78,11 +78,6 @@ export async function loadHub(slug: string): Promise<{
       .from("station_assignments")
       .select("*")
       .eq("tournament_id", tournament.id),
-    // RLS returns only the caller's own row (or every row, to the owner).
-    supabase
-      .from("tournament_admins")
-      .select("id, user_id, email, role, accepted_at")
-      .eq("tournament_id", tournament.id),
   ]);
 
   const playerRows = (players ?? []) as PlayerRow[];
@@ -92,27 +87,15 @@ export async function loadHub(slug: string): Promise<{
     (results ?? []) as MatchResultRow[],
   );
 
-  // Access is the owner plus anyone they invited, matched by account or by the
-  // email the invite was sent to.
+  // Access is the owner plus anyone they invited. Resolved server-side rather
+  // than through RLS so it works whether or not the token carries an email.
   const isOwner = auth.user?.id === tournament.organizer_id;
-  const email = auth.user?.email ? normalizeEmail(auth.user.email) : null;
-  const adminList = (adminRows ?? []) as {
-    id: string;
-    user_id: string | null;
-    email: string;
-    role: string;
-    accepted_at: string | null;
-  }[];
-  const invited = adminList.find(
-    (a) =>
-      (auth.user?.id && a.user_id === auth.user.id) ||
-      (email && normalizeEmail(a.email) === email),
-  );
-  const viewerRole: AdminRole | null = isOwner
-    ? "owner"
-    : invited && isAdminRole(invited.role) && invited.role !== "owner"
-      ? invited.role
-      : null;
+  const viewerRole: AdminRole | null = auth.user
+    ? await resolveRole(tournament.id, tournament.organizer_id, {
+        id: auth.user.id,
+        email: auth.user.email,
+      })
+    : null;
   const isOrganizer = viewerRole !== null;
 
   const data: HubData = {
@@ -160,18 +143,8 @@ export async function loadHub(slug: string): Promise<{
     prevRanking: tournament.prev_power_ranking ?? [],
     isOrganizer,
     viewerRole,
-    // RLS returns every row to the owner and only their own to an invitee, so
-    // this is the full list exactly when the viewer is allowed to manage it.
-    admins: isOwner
-      ? adminList
-          .filter((a) => isAdminRole(a.role) && a.role !== "owner")
-          .map((a) => ({
-            id: a.id,
-            email: a.email,
-            role: a.role as AdminRole,
-            acceptedAt: a.accepted_at,
-          }))
-      : [],
+    // Only the owner may see who else has access.
+    admins: isOwner ? await listAdmins(tournament.id) : [],
     ownerEmail: isOwner ? (auth.user?.email ?? null) : null,
     pending: ((pending ?? []) as Record<string, unknown>[]).map((r) => ({
       id: r.id as string,

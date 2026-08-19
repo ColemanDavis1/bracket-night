@@ -79,6 +79,7 @@ import {
   type AdminRole,
   type Capability,
 } from "@/lib/access/roles";
+import { resolveRole } from "@/lib/access/lookup";
 
 export interface CreateTournamentInput {
   name: string;
@@ -223,41 +224,19 @@ export async function createTournament(input: CreateTournamentInput) {
 
 /** Load a tournament + children for a write action and assert ownership. */
 /**
- * The caller's role on an event: owner, an invited role, or null. Mirrors
- * public.tournament_role() in migration 0012 — RLS enforces the coarse split
- * independently, and these checks enforce the per-capability one.
+ * The caller's role on an event. Delegates to the server-side lookup, which
+ * does not depend on the access token carrying an email claim — see
+ * src/lib/access/lookup.ts for why that mattered.
  */
 async function roleOn(
-  supabase: SupabaseClient,
+  _supabase: SupabaseClient,
   tournament: TournamentRow,
   user: { id: string; email?: string | null },
 ): Promise<AdminRole | null> {
-  if (tournament.organizer_id === user.id) return "owner";
-  const email = user.email ? normalizeEmail(user.email) : null;
-  const { data } = await supabase
-    .from("tournament_admins")
-    .select("id, role, user_id, email, accepted_at")
-    .eq("tournament_id", tournament.id);
-  const rows = (data ?? []) as {
-    id: string;
-    role: string;
-    user_id: string | null;
-    email: string;
-    accepted_at: string | null;
-  }[];
-  const mine = rows.find(
-    (r) => r.user_id === user.id || (email && normalizeEmail(r.email) === email),
-  );
-  if (!mine || !isAdminRole(mine.role) || mine.role === "owner") return null;
-
-  // Link the invite to the account on first use, so it survives an email change.
-  if (!mine.user_id || !mine.accepted_at) {
-    await supabase
-      .from("tournament_admins")
-      .update({ user_id: user.id, accepted_at: new Date().toISOString() })
-      .eq("id", mine.id);
-  }
-  return mine.role;
+  return resolveRole(tournament.id, tournament.organizer_id, {
+    id: user.id,
+    email: user.email,
+  });
 }
 
 /**

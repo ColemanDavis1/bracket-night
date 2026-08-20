@@ -133,6 +133,23 @@ Format, seeding, and pipeline changes rebuild the schedule. Before anything is
 played that costs nothing; afterwards Settings asks you to confirm clearing the
 scores first, since a rebuild renumbers the matches.
 
+## Courts
+
+Set the count and names on **Settings → Courts & stations**. Once a match is put
+on a court it stays there until it is finished — assignments are sticky, and
+auto-assign only ever fills courts nothing is sitting on.
+
+A court shows one of three states on the **Courts** tab and the TV board:
+
+- **Open** — nothing on it.
+- **Up next** — a match is reserved for it. Press *Call to court* to start.
+- **Live** — the match has been called.
+
+When you enter a score the court frees itself and the next match in schedule
+order is reserved on it automatically, so the board keeps itself current without
+anyone pressing auto-assign. *Auto-assign courts* does the same thing on demand
+for every empty court at once.
+
 ## Sharing control of an event
 
 **Settings tab → Who can help run this** (owner only). Invite by email, pick a

@@ -11,6 +11,7 @@ import type { HubData } from "./types";
 import { nameMapOf } from "@/lib/hub-helpers";
 import { useRealtimeRefresh } from "./use-realtime";
 import {
+  assignmentOnStation,
   readyQueue,
   stationLabel,
   type StationAssignmentLike,
@@ -153,11 +154,12 @@ function buildScenes(
   // are in use it replaces the ready-match "Now playing" scene.
   const stationLabels = data.tournament.stationLabels;
   const matchByKey = new Map(state.matches.map((m) => [m.key, m]));
+  // Reserved courts count too: a match assigned but not yet called still tells
+  // the room where to go.
   const playingByStation = new Map<number, string>();
-  for (const s of data.stations) {
-    if (s.state === "playing" && s.station != null) {
-      playingByStation.set(s.station, s.matchKey);
-    }
+  for (let i = 0; i < stationCount; i++) {
+    const a = assignmentOnStation(data.stations, i);
+    if (a) playingByStation.set(i, a.matchKey);
   }
   const stationsInUse = playingByStation.size > 0;
 

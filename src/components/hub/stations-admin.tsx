@@ -17,6 +17,7 @@ import {
   setMatchState,
 } from "@/lib/actions/tournaments";
 import {
+  assignmentOnStation,
   occupiedStations,
   readyQueue,
   stationLabel,
@@ -61,12 +62,8 @@ export function StationsAdmin({
   }));
   const matchByKey = new Map(state.matches.map((m) => [m.key, m]));
 
-  const playingByStation = new Map<number, HubStation>();
-  for (const s of stations) {
-    if (s.state === "playing" && s.station != null) {
-      playingByStation.set(s.station, s);
-    }
-  }
+  // A court shows whatever is on it — called or merely assigned.
+  const onStation = (i: number) => assignmentOnStation(stations, i);
   const occupied = occupiedStations(assignments);
   const openCourts: number[] = [];
   for (let i = 0; i < numStations; i++) if (!occupied.has(i)) openCourts.push(i);
@@ -97,17 +94,22 @@ export function StationsAdmin({
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {Array.from({ length: numStations }, (_, i) => {
-          const playing = playingByStation.get(i);
-          const m = playing ? matchByKey.get(playing.matchKey) : undefined;
+          const assigned = onStation(i);
+          const isLive = assigned?.state === "playing";
+          const m = assigned ? matchByKey.get(assigned.matchKey) : undefined;
           const matchup = m ? matchupName(m, names) : null;
           return (
-            <Card key={i} className={playing ? "border-primary/40" : undefined}>
+            <Card key={i} className={assigned ? "border-primary/40" : undefined}>
               <CardHeader className="pb-2">
                 <CardTitle className="flex items-center justify-between text-sm">
                   <span>{stationLabel(i, stationLabels)}</span>
-                  {playing ? (
+                  {isLive ? (
                     <span className="flex items-center gap-1 text-xs font-bold uppercase text-primary">
                       <Radio className="h-3.5 w-3.5 animate-pulse-red" /> Live
+                    </span>
+                  ) : assigned ? (
+                    <span className="text-xs font-bold uppercase text-broadcast-gold">
+                      Up next
                     </span>
                   ) : (
                     <span className="text-xs font-medium text-muted-foreground">
@@ -126,15 +128,26 @@ export function StationsAdmin({
                     <p className="mt-0.5 text-xs text-muted-foreground">
                       {m?.label}
                     </p>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="mt-3"
-                      disabled={pending}
-                      onClick={() => markDone(playing!.matchKey)}
-                    >
-                      <CheckCircle2 className="h-4 w-4" /> Mark done
-                    </Button>
+                    {isLive ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="mt-3"
+                        disabled={pending}
+                        onClick={() => markDone(assigned!.matchKey)}
+                      >
+                        <CheckCircle2 className="h-4 w-4" /> Mark done
+                      </Button>
+                    ) : (
+                      <Button
+                        size="sm"
+                        className="mt-3"
+                        disabled={pending}
+                        onClick={() => call(assigned!.matchKey, i)}
+                      >
+                        <Radio className="h-4 w-4" /> Call to court
+                      </Button>
+                    )}
                   </div>
                 ) : (
                   <p className="text-sm text-muted-foreground">No match assigned.</p>

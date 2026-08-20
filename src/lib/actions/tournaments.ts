@@ -316,9 +316,11 @@ export async function enterResult(input: EnterResultInput) {
   );
   if (error) throw error;
 
-  // Entering a score frees the court the match was on (call board).
+  // Entering a score frees the court the match was on, and the next match in
+  // order takes it (call board).
   await freeStation(supabase, tournament.id, input.matchKey);
   await recomputeAndPersist(supabase, tournament);
+  await fillFreedCourts(supabase, tournament);
   revalidatePath(`/t/${tournament.slug}/manage`);
   revalidatePath(`/t/${tournament.slug}`);
 }
@@ -916,6 +918,52 @@ async function freeStation(
     .update({ state: "done" })
     .eq("tournament_id", tournamentId)
     .eq("match_key", matchKey);
+}
+
+/**
+ * Put the next waiting matches onto whatever courts are now empty, in schedule
+ * order. Called after a score frees a court so the board keeps itself current
+ * instead of waiting for someone to press auto-assign.
+ *
+ * Placed as "queued", not "playing": the court is reserved and shown on the
+ * board, but nobody is claimed to be mid-match until it is called. Existing
+ * placements are never moved — see lib/stations/assign.ts.
+ */
+async function fillFreedCourts(
+  supabase: SupabaseClient,
+  tournament: TournamentRow,
+) {
+  const numStations = Math.min(
+    8,
+    Math.max(1, tournament.config?.numStations ?? 1),
+  );
+  const [state, { data: assigns }] = await Promise.all([
+    engineStateFor(supabase, tournament),
+    supabase
+      .from("station_assignments")
+      .select("*")
+      .eq("tournament_id", tournament.id),
+  ]);
+  const placements = computeAutoAssign(
+    state.matches.map((m) => ({ key: m.key, order: m.order, status: m.status })),
+    ((assigns ?? []) as StationAssignmentRow[]).map((a) => ({
+      matchKey: a.match_key,
+      station: a.station,
+      state: a.state,
+    })),
+    numStations,
+  );
+  if (!placements.length) return;
+  await supabase.from("station_assignments").upsert(
+    placements.map((p) => ({
+      tournament_id: tournament.id,
+      match_key: p.matchKey,
+      station: p.station,
+      state: "queued",
+      called_at: null,
+    })),
+    { onConflict: "tournament_id,match_key" },
+  );
 }
 
 /**
@@ -1816,6 +1864,7 @@ export async function recordNoShow(
   if (error) throw error;
   await freeStation(supabase, tournament.id, input.matchKey);
   await recomputeAndPersist(supabase, tournament);
+  await fillFreedCourts(supabase, tournament);
   reval(tournament);
 }
 
@@ -1943,15 +1992,16 @@ export async function autoAssignStations(tournamentId: string) {
   ).map((a) => ({ matchKey: a.match_key, station: a.station, state: a.state }));
 
   const placements = computeAutoAssign(matches, existing, numStations);
-  const now = new Date().toISOString();
   if (placements.length) {
+    // Reserve the court; "Call to court" is what marks a match live. Same
+    // behavior as the automatic fill after a score.
     await supabase.from("station_assignments").upsert(
       placements.map((p) => ({
         tournament_id: tournament.id,
         match_key: p.matchKey,
         station: p.station,
-        state: "playing",
-        called_at: now,
+        state: "queued",
+        called_at: null,
       })),
       { onConflict: "tournament_id,match_key" },
     );

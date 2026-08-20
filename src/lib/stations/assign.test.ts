@@ -33,12 +33,21 @@ describe("readyQueue", () => {
     expect(readyQueue(matches, assignments).map((x) => x.key)).toEqual(["c"]);
   });
 
-  it("still queues a match that is only queued (not playing)", () => {
+  it("still queues a match assigned to no particular court", () => {
     const matches = [m("a", 1)];
     const assignments: StationAssignmentLike[] = [
       { matchKey: "a", station: null, state: "queued" },
     ];
     expect(readyQueue(matches, assignments).map((x) => x.key)).toEqual(["a"]);
+  });
+
+  it("drops a match that already has a court, even before it starts", () => {
+    // Otherwise the next auto-assign could move it to a different court.
+    const matches = [m("a", 1), m("b", 2)];
+    const assignments: StationAssignmentLike[] = [
+      { matchKey: "a", station: 2, state: "queued" },
+    ];
+    expect(readyQueue(matches, assignments).map((x) => x.key)).toEqual(["b"]);
   });
 });
 
@@ -50,6 +59,13 @@ describe("openStations", () => {
       { matchKey: "c", station: 1, state: "done" }, // done does not occupy
     ];
     expect(openStations(assignments, 4)).toEqual([1, 3]);
+  });
+
+  it("counts an assigned-but-not-started court as taken", () => {
+    const assignments: StationAssignmentLike[] = [
+      { matchKey: "a", station: 0, state: "queued" },
+    ];
+    expect(openStations(assignments, 3)).toEqual([1, 2]);
   });
 });
 
@@ -92,5 +108,54 @@ describe("stationLabel", () => {
     expect(stationLabel(2, ["Court 1", "Court 2"])).toBe("Station 3");
     expect(stationLabel(0, null)).toBe("Station 1");
     expect(stationLabel(1, ["", "  "])).toBe("Station 2");
+  });
+});
+
+describe("court assignment is stable across the tournament", () => {
+  it("leaves an existing placement alone and fills only what is empty", () => {
+    const matches = [m("a", 1), m("b", 2), m("c", 3)];
+    const assignments: StationAssignmentLike[] = [
+      { matchKey: "b", station: 1, state: "queued" },
+    ];
+    // Court 1 is b's. a and c take the courts nothing is sitting on.
+    expect(autoAssignStations(matches, assignments, 3)).toEqual([
+      { matchKey: "a", station: 0 },
+      { matchKey: "c", station: 2 },
+    ]);
+  });
+
+  it("is idempotent — running it again moves nobody", () => {
+    const matches = [m("a", 1), m("b", 2)];
+    let assignments: StationAssignmentLike[] = [];
+
+    const first = autoAssignStations(matches, assignments, 2);
+    assignments = first.map((p) => ({
+      matchKey: p.matchKey,
+      station: p.station,
+      state: "playing" as const,
+    }));
+    expect(first).toEqual([
+      { matchKey: "a", station: 0 },
+      { matchKey: "b", station: 1 },
+    ]);
+    expect(autoAssignStations(matches, assignments, 2)).toEqual([]);
+  });
+
+  it("reuses a court only once its match is done", () => {
+    const matches = [m("a", 1, "done"), m("b", 2)];
+    const assignments: StationAssignmentLike[] = [
+      { matchKey: "a", station: 0, state: "done" },
+    ];
+    expect(autoAssignStations(matches, assignments, 1)).toEqual([
+      { matchKey: "b", station: 0 },
+    ]);
+  });
+
+  it("gives the earliest waiting match the lowest free court", () => {
+    const matches = [m("late", 9), m("early", 1)];
+    expect(autoAssignStations(matches, [], 2)).toEqual([
+      { matchKey: "early", station: 0 },
+      { matchKey: "late", station: 1 },
+    ]);
   });
 });
